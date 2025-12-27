@@ -1,10 +1,17 @@
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Plus, FileText, Trash2, StickyNote } from "lucide-react"
+import { Plus, FileText, Trash2, StickyNote, Hash, ChevronRight } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useMutation } from "convex/react"
 import { api } from "@/convex/_generated/api"
 import { Id } from "@/convex/_generated/dataModel"
+import {
+    Accordion,
+    AccordionContent,
+    AccordionItem,
+    AccordionTrigger,
+} from "@/components/ui/accordion"
+import { useMemo } from "react"
 
 interface Page {
     id: string
@@ -17,14 +24,68 @@ interface DocumentStructureSidebarProps {
     pages: Page[]
     activePageId: string | null
     onPageSelect: (id: string) => void
+    onSectionClick?: (key: string) => void
 }
 
-export function DocumentStructureSidebar({ projectId, pages, activePageId, onPageSelect }: DocumentStructureSidebarProps) {
+export interface Section {
+    type: "h1" | "h2" | "h3"
+    text: string
+    key?: string
+}
+
+export function getPageSections(contentJSON: string): Section[] {
+    try {
+        const content = JSON.parse(contentJSON)
+        const sections: Section[] = []
+
+        if (!content.root || !content.root.children) return []
+
+        const traverse = (node: any) => {
+            if (node.type === "heading") {
+                const text = node.children?.[0]?.text || ""
+                if (text) {
+                    sections.push({
+                        type: node.tag,
+                        text: text,
+                        key: node.key // Extract Lexical Node Key
+                    })
+                }
+            } else if (node.children && Array.isArray(node.children)) {
+                node.children.forEach(traverse)
+            }
+        }
+
+        content.root.children.forEach(traverse)
+        return sections
+    } catch (e) {
+        return []
+    }
+}
+
+function getPageTitle(page: Page): string {
+    // Try to find the first H1 in content
+    try {
+        const content = JSON.parse(page.content)
+        if (content.root && content.root.children) {
+            for (const node of content.root.children) {
+                if (node.type === "heading" && node.tag === "h1") {
+                    const text = node.children?.[0]?.text
+                    if (text && text.trim().length > 0) return text
+                }
+            }
+        }
+    } catch (e) {
+        // ignore
+    }
+    return page.title
+}
+
+export function DocumentStructureSidebar({ projectId, pages, activePageId, onPageSelect, onSectionClick }: DocumentStructureSidebarProps) {
     const addPage = useMutation(api.projects.addPage)
     const deletePage = useMutation(api.projects.deletePage)
 
     const handleAddPage = async () => {
-        const title = `Page ${pages.length + 1}`
+        const title = `Nouvelle Page`
         const newPageId = await addPage({ projectId, title })
         if (newPageId) {
             onPageSelect(newPageId)
@@ -44,7 +105,7 @@ export function DocumentStructureSidebar({ projectId, pages, activePageId, onPag
                 const index = pages.findIndex(p => p.id === pageId)
                 const newIndex = Math.max(0, index - 1)
                 const newActive = pages.find((_, i) => i === newIndex) || pages[0]
-                onPageSelect(newActive.id) // Fallback might fail if length was 1 before but we checked
+                onPageSelect(newActive.id)
             }
         }
     }
@@ -54,45 +115,94 @@ export function DocumentStructureSidebar({ projectId, pages, activePageId, onPag
             <div className="p-4 border-b border-border/50 shrink-0">
                 <h3 className="font-semibold text-sm flex items-center gap-2">
                     <FileText className="w-4 h-4 text-muted-foreground" />
-                    Pages du document
+                    Structure du document
                 </h3>
             </div>
 
-            <ScrollArea className="flex-1 p-2 min-h-0">
-                <div className="space-y-1">
+            <ScrollArea className="flex-1 min-h-0">
+                <div className="p-2">
                     {pages.length === 0 ? (
                         <div className="text-center text-muted-foreground text-sm py-8">
                             Aucune page
                         </div>
                     ) : (
-                        pages.map((page, index) => (
-                            <div
-                                key={page.id}
-                                onClick={() => onPageSelect(page.id)}
-                                className={cn(
-                                    "group flex items-center justify-between p-2 rounded-md text-sm cursor-pointer transition-colors border border-transparent",
-                                    activePageId === page.id
-                                        ? "bg-primary/10 border-primary/20 text-primary"
-                                        : "hover:bg-muted text-muted-foreground hover:text-foreground"
-                                )}
-                            >
-                                <div className="flex items-center gap-2 truncate flex-1 min-w-0">
-                                    <StickyNote className="w-4 h-4 shrink-0 opacity-70" />
-                                    <span className="truncate font-medium">
-                                        {page.title || `Page ${index + 1}`}
-                                    </span>
-                                </div>
+                        <Accordion
+                            type="single"
+                            collapsible
+                            value={activePageId || undefined}
+                            onValueChange={(val) => {
+                                if (val) onPageSelect(val)
+                            }}
+                            className="space-y-1"
+                        >
+                            {pages.map((page, index) => {
+                                const realTitle = getPageTitle(page)
+                                const sections = getPageSections(page.content)
 
-                                <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-6 w-6 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-destructive/10 hover:text-destructive"
-                                    onClick={(e) => handleDeletePage(page.id, e)}
-                                >
-                                    <Trash2 className="w-3 h-3" />
-                                </Button>
-                            </div>
-                        ))
+                                return (
+                                    <AccordionItem
+                                        key={page.id}
+                                        value={page.id}
+                                        className="border rounded-md px-0 data-[state=open]:bg-muted/30"
+                                    >
+                                        <div className="flex items-center group px-2 hover:bg-muted/50 transition-colors rounded-t-md">
+                                            <AccordionTrigger
+                                                onClick={() => onPageSelect(page.id)}
+                                                className="flex-1 hover:no-underline py-2 text-sm font-medium pr-2"
+                                            >
+                                                <span className="flex items-center gap-2 truncate">
+                                                    <span className="text-xs text-muted-foreground font-mono bg-muted px-1.5 py-0.5 rounded">
+                                                        {index + 1}
+                                                    </span>
+                                                    <span className="truncate">{realTitle}</span>
+                                                </span>
+                                            </AccordionTrigger>
+
+                                            <Button
+                                                variant="ghost"
+                                                size="icon"
+                                                className="h-6 w-6 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-destructive/10 hover:text-destructive ml-1"
+                                                onClick={(e) => handleDeletePage(page.id, e)}
+                                            >
+                                                <Trash2 className="w-3 h-3" />
+                                            </Button>
+                                        </div>
+
+                                        <AccordionContent className="px-2 pb-2">
+                                            {sections.length > 0 ? (
+                                                <div className="flex flex-col gap-1 pl-6 pt-1 pr-2">
+                                                    {sections.map((section, idx) => (
+                                                        <div
+                                                            key={idx}
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                if (onSectionClick) {
+                                                                    // Pass section info for flexible matching
+                                                                    onSectionClick(JSON.stringify({ key: section.key, text: section.text, type: section.type }));
+                                                                }
+                                                            }}
+                                                            className={cn(
+                                                                "text-xs text-muted-foreground py-1 flex items-center gap-2 cursor-pointer hover:text-foreground transition-colors group/item min-w-0",
+                                                                section.type === "h1" && "hidden", // H1 is already the title
+                                                                section.type === "h2" && "pl-0 font-medium text-foreground/80",
+                                                                section.type === "h3" && "pl-3"
+                                                            )}
+                                                        >
+                                                            <Hash className="w-3 h-3 opacity-50 shrink-0 group-hover/item:text-primary" />
+                                                            <span className="truncate flex-1" title={section.text}>{section.text}</span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            ) : (
+                                                <div className="text-xs text-muted-foreground pl-8 italic pt-1">
+                                                    Aucune section
+                                                </div>
+                                            )}
+                                        </AccordionContent>
+                                    </AccordionItem>
+                                )
+                            })}
+                        </Accordion>
                     )}
                 </div>
             </ScrollArea>
@@ -106,3 +216,4 @@ export function DocumentStructureSidebar({ projectId, pages, activePageId, onPag
         </div>
     )
 }
+

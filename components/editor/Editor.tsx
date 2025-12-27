@@ -18,7 +18,9 @@ import { MarkdownShortcutPlugin } from "@lexical/react/LexicalMarkdownShortcutPl
 import { TRANSFORMERS } from "@lexical/markdown"
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext"
 import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary"
-import { $getRoot, $insertNodes, EditorState, $createParagraphNode, $createTextNode } from "lexical"
+import { $getRoot, $insertNodes, EditorState, $createParagraphNode, $createTextNode, $getNodeByKey } from "lexical"
+
+// ... imports
 import { useEffect, useRef, useState, forwardRef, useImperativeHandle } from "react"
 import { useMutation } from "convex/react"
 import { api } from "@/convex/_generated/api"
@@ -109,6 +111,8 @@ interface EditorProps {
     projectId: Id<"projects">
     pageId: string
     initialContent?: string
+    pages: any[]
+    onPageSelect: (id: string) => void
 }
 
 function AutoSavePlugin({ projectId, pageId }: { projectId: Id<"projects">, pageId: string }) {
@@ -219,7 +223,40 @@ function InitialContentPlugin({ initialContent, pageId }: { initialContent?: str
     return null
 }
 
-export const Editor = forwardRef<any, EditorProps>(({ projectId, pageId, initialContent }, ref) => {
+// Internal Plugin to handle Sidebar logic with access to Editor Context
+function SidebarPlugin({ projectId, pages, activePageId, onPageSelect }: {
+    projectId: Id<"projects">,
+    pages: any[],
+    activePageId: string,
+    onPageSelect: (id: string) => void
+}) {
+    const [editor] = useLexicalComposerContext();
+
+    return (
+        <DocumentStructureSidebar
+            projectId={projectId}
+            pages={pages}
+            activePageId={activePageId}
+            onPageSelect={onPageSelect}
+            onSectionClick={(key) => {
+                editor.update(() => {
+                    const node = $getNodeByKey(key);
+                    if (node) {
+                        const element = editor.getElementByKey(node.getKey());
+                        if (element) {
+                            element.scrollIntoView({ behavior: "smooth", block: "center" });
+                            // Select the node to give visual feedback
+                            // @ts-ignore
+                            if (node.select) node.select();
+                        }
+                    }
+                });
+            }}
+        />
+    );
+}
+
+export const Editor = forwardRef<any, EditorProps>(({ projectId, pageId, initialContent, pages, onPageSelect }, ref) => {
     const initialConfig = {
         namespace: `DocWiseEditor-${pageId}`,
         theme,
@@ -277,9 +314,12 @@ export const Editor = forwardRef<any, EditorProps>(({ projectId, pageId, initial
 
                 {/* Right Sidebar for Structure */}
                 <div className="hidden xl:block h-full">
-                    {/*<DocumentStructureSidebar 
-                    
-                    />*/}
+                    <SidebarPlugin
+                        projectId={projectId}
+                        pages={pages}
+                        activePageId={pageId}
+                        onPageSelect={onPageSelect}
+                    />
                 </div>
             </div>
         </LexicalComposer >

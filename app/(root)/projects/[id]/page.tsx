@@ -181,6 +181,8 @@ export default function EditorPage() {
                                     pageId={activePageId}
                                     initialContent={activePage.content}
                                     ref={editorRef}
+                                    pages={project.pages || []}
+                                    onPageSelect={setActivePageId}
                                 />
                             </div>
                         </div>
@@ -200,15 +202,7 @@ export default function EditorPage() {
                         </div>
                     )}
 
-                    {/* Right Sidebar for Pages - Hidden on mobile */}
-                    <div className="hidden xl:block">
-                        <DocumentStructureSidebar
-                            projectId={projectId}
-                            pages={project.pages || []}
-                            activePageId={activePageId}
-                            onPageSelect={setActivePageId}
-                        />
-                    </div>
+
                 </div>
             </main>
         </div>

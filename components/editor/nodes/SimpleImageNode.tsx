@@ -24,6 +24,8 @@ import { useLexicalNodeSelection } from '@lexical/react/useLexicalNodeSelection'
 import { mergeRegister } from '@lexical/utils';
 import * as React from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useQuery } from "convex/react";
+import { api } from "@/convex/_generated/api";
 
 export interface SerializedSimpleImageNode extends SerializedLexicalNode {
     altText: string;
@@ -57,6 +59,15 @@ function ImageComponent({
     const [isSelected, setSelected, clearSelection] = useLexicalNodeSelection(nodeKey);
     const [isResizing, setIsResizing] = useState(false);
     const imageRef = useRef<HTMLImageElement>(null);
+    const resizingRef = useRef<{ startX: number; startY: number; startWidth: number; startHeight: number } | null>(null);
+
+    const isConvexStorage = src.startsWith("convex:");
+    const storageId = isConvexStorage ? src.replace("convex:", "") : null;
+
+    // @ts-ignore
+    const storageUrl = useQuery(api.files.getUrl, storageId ? { storageId } : "skip");
+
+    const displaySrc = isConvexStorage ? (storageUrl || "") : src;
 
     const onDelete = useCallback(
         (payload: KeyboardEvent) => {
@@ -96,19 +107,75 @@ function ImageComponent({
         );
     }, [editor, isSelected, setSelected, clearSelection]);
 
+    const handlePointerDown = (event: React.PointerEvent) => {
+        if (!resizable || !isSelected) return;
+        event.preventDefault();
+        setIsResizing(true);
+        const img = imageRef.current;
+        if (img) {
+            const { width, height } = img.getBoundingClientRect();
+            resizingRef.current = {
+                startX: event.clientX,
+                startY: event.clientY,
+                startWidth: width,
+                startHeight: height
+            };
+            document.addEventListener("pointermove", handlePointerMove);
+            document.addEventListener("pointerup", handlePointerUp);
+        }
+    };
+
+    const handlePointerMove = (event: PointerEvent) => {
+        if (!resizingRef.current) return;
+        const { startX, startWidth } = resizingRef.current;
+        const diffX = event.clientX - startX;
+        const newWidth = Math.max(100, startWidth + diffX);
+
+        if (imageRef.current) {
+            imageRef.current.style.width = `${newWidth}px`;
+            imageRef.current.style.height = "auto";
+        }
+    };
+
+    const handlePointerUp = (event: PointerEvent) => {
+        if (!resizingRef.current) return;
+        const { startX, startWidth } = resizingRef.current;
+        const diffX = event.clientX - startX;
+        const newWidth = Math.max(100, startWidth + diffX);
+
+        setIsResizing(false);
+        resizingRef.current = null;
+        document.removeEventListener("pointermove", handlePointerMove);
+        document.removeEventListener("pointerup", handlePointerUp);
+
+        editor.update(() => {
+            const node = $getNodeByKey(nodeKey);
+            if ($isSimpleImageNode(node)) {
+                node.setWidthAndHeight(newWidth, "inherit");
+            }
+        });
+    };
+
     return (
         <div className={`relative inline-block ${isSelected ? 'ring-2 ring-primary' : ''}`}>
             <img
                 ref={imageRef}
-                src={src}
+                src={displaySrc}
                 alt={altText}
                 style={{
                     width: width === "inherit" ? "100%" : width,
-                    height: height === "inherit" ? "auto" : height,
+                    height: "auto", // Always maintain aspect ratio for now
                     maxWidth: maxWidth === "inherit" ? "100%" : maxWidth,
                 }}
                 className="rounded-md max-w-full h-auto cursor-pointer"
+                draggable="false"
             />
+            {isSelected && resizable && (
+                <div
+                    className="absolute bottom-0 right-0 w-4 h-4 bg-primary cursor-se-resize rounded-full border-2 border-white shadow-sm transform translate-x-1/2 translate-y-1/2 z-10"
+                    onPointerDown={handlePointerDown}
+                />
+            )}
         </div>
     );
 }
@@ -180,6 +247,12 @@ export class SimpleImageNode extends DecoratorNode<React.ReactNode> {
             version: 1,
             width: this.__width === "inherit" ? 0 : this.__width,
         };
+    }
+
+    setWidthAndHeight(width: number | "inherit", height: number | "inherit"): void {
+        const writable = this.getWritable();
+        writable.__width = width;
+        writable.__height = height;
     }
 
     // View

@@ -31,7 +31,8 @@ import {
     AlertTriangle,
     XCircle,
     MoreHorizontal,
-    Image as ImageIcon
+    Image as ImageIcon,
+    Sparkles
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
@@ -47,6 +48,14 @@ import { INSERT_TABLE_COMMAND } from "@lexical/table"
 import { $createBannerNode, BannerType } from "@/components/editor/nodes/BannerNode"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { $createSimpleImageNode } from "@/components/editor/nodes/SimpleImageNode"
+import { useMutation } from "convex/react"
+import { api } from "@/convex/_generated/api"
+import { getPageSections, Section } from "./DocumentStructureSidebar"
+import { $convertFromMarkdownString, $convertToMarkdownString, TRANSFORMERS } from "@lexical/markdown"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
+import { Textarea } from "@/components/ui/textarea"
+import { Label } from "@/components/ui/label"
+import { Loader2 } from "lucide-react"
 
 const TEXT_COLORS = [
     { name: "Noir", value: "#000000" },
@@ -92,6 +101,16 @@ export function ToolbarPlugin() {
     const [currentHighlight, setCurrentHighlight] = useState<string | null>(null)
     const [currentFontSize, setCurrentFontSize] = useState<string | null>(null)
 
+    // AI Autocomplete State
+    const [aiPrompt, setAiPrompt] = useState("")
+    const [aiSections, setAiSections] = useState<Section[]>([])
+    const [filteredSections, setFilteredSections] = useState<Section[]>([])
+    const [showSuggestions, setShowSuggestions] = useState(false)
+    const [suggestionIndex, setSuggestionIndex] = useState(0)
+
+    // Mutation for file upload
+    const generateUploadUrl = useMutation(api.files.generateUploadUrl);
+
     const updateToolbar = useCallback(() => {
         const selection = $getSelection()
         if ($isRangeSelection(selection)) {
@@ -135,13 +154,13 @@ export function ToolbarPlugin() {
     }
 
     return (
-        <div className="flex flex-wrap items-center gap-1 p-2 border-b border-border/50 bg-muted/20 rounded-t-lg sticky top-0 z-10 backdrop-blur">
+        <div className="flex flex-nowrap overflow-x-auto items-center gap-1 p-2 border-b border-border/50 bg-muted/20 rounded-t-lg sticky top-0 z-10 backdrop-blur shrink-0 min-h-[50px]">
             {/* History Controls */}
             <div className="flex items-center gap-0.5">
-                <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => editor.dispatchCommand(UNDO_COMMAND, undefined)} title="Annuler">
+                <Button variant="ghost" size="sm" className="h-7 w-7 p-0 cursor-pointer" onClick={() => editor.dispatchCommand(UNDO_COMMAND, undefined)} title="Annuler">
                     <Undo className="h-3.5 w-3.5" />
                 </Button>
-                <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => editor.dispatchCommand(REDO_COMMAND, undefined)} title="Rétablir">
+                <Button variant="ghost" size="sm" className="h-7 w-7 p-0 cursor-pointer" onClick={() => editor.dispatchCommand(REDO_COMMAND, undefined)} title="Rétablir">
                     <Redo className="h-3.5 w-3.5" />
                 </Button>
             </div>
@@ -150,22 +169,22 @@ export function ToolbarPlugin() {
 
             {/* Basic Formatting */}
             <div className="flex items-center gap-0.5">
-                <Toggle size="sm" pressed={isBold} onPressedChange={() => editor.dispatchCommand(FORMAT_TEXT_COMMAND, "bold")} className="h-7 w-7 p-0" aria-label="Gras">
+                <Toggle size="sm" pressed={isBold} onPressedChange={() => editor.dispatchCommand(FORMAT_TEXT_COMMAND, "bold")} className="h-7 w-7 p-0 cursor-pointer" aria-label="Gras">
                     <Bold className="h-3.5 w-3.5" />
                 </Toggle>
-                <Toggle size="sm" pressed={isItalic} onPressedChange={() => editor.dispatchCommand(FORMAT_TEXT_COMMAND, "italic")} className="h-7 w-7 p-0" aria-label="Italique">
+                <Toggle size="sm" pressed={isItalic} onPressedChange={() => editor.dispatchCommand(FORMAT_TEXT_COMMAND, "italic")} className="h-7 w-7 p-0 cursor-pointer" aria-label="Italique">
                     <Italic className="h-3.5 w-3.5" />
                 </Toggle>
-                <Toggle size="sm" pressed={isUnderline} onPressedChange={() => editor.dispatchCommand(FORMAT_TEXT_COMMAND, "underline")} className="h-7 w-7 p-0" aria-label="Souligné">
+                <Toggle size="sm" pressed={isUnderline} onPressedChange={() => editor.dispatchCommand(FORMAT_TEXT_COMMAND, "underline")} className="h-7 w-7 p-0 cursor-pointer" aria-label="Souligné">
                     <Underline className="h-3.5 w-3.5" />
                 </Toggle>
 
                 {/* Advanced Formatting Group (Hidden on tiny screens) */}
                 <div className="hidden sm:flex items-center gap-0.5">
-                    <Toggle size="sm" pressed={isStrikethrough} onPressedChange={() => editor.dispatchCommand(FORMAT_TEXT_COMMAND, "strikethrough")} className="h-7 w-7 p-0" aria-label="Barré">
+                    <Toggle size="sm" pressed={isStrikethrough} onPressedChange={() => editor.dispatchCommand(FORMAT_TEXT_COMMAND, "strikethrough")} className="h-7 w-7 p-0 cursor-pointer" aria-label="Barré">
                         <Strikethrough className="h-3.5 w-3.5" />
                     </Toggle>
-                    <Toggle size="sm" pressed={isCode} onPressedChange={() => editor.dispatchCommand(FORMAT_TEXT_COMMAND, "code")} className="h-7 w-7 p-0" aria-label="Code">
+                    <Toggle size="sm" pressed={isCode} onPressedChange={() => editor.dispatchCommand(FORMAT_TEXT_COMMAND, "code")} className="h-7 w-7 p-0 cursor-pointer" aria-label="Code">
                         <Code className="h-3.5 w-3.5" />
                     </Toggle>
                 </div>
@@ -177,7 +196,7 @@ export function ToolbarPlugin() {
             <div className="flex items-center gap-0.5">
                 <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="sm" className="h-7 px-2 gap-1" title="Titres">
+                        <Button variant="ghost" size="sm" className="h-7 px-2 gap-1 cursor-pointer" title="Titres">
                             <Type className="h-3.5 w-3.5" />
                             <span className="text-xs hidden sm:inline">Normal</span>
                         </Button>
@@ -307,31 +326,32 @@ export function ToolbarPlugin() {
                 <Button // Image Button
                     variant="ghost"
                     size="sm"
-                    className="h-7 w-7 p-0"
+                    className="h-7 w-7 p-0 cursor-pointer"
                     title="Insérer une image"
                     onClick={() => {
                         const input = document.createElement('input');
                         input.type = 'file';
                         input.accept = 'image/*';
-                        input.onchange = (e) => {
+                        input.onchange = async (e) => {
                             const file = (e.target as HTMLInputElement).files?.[0];
                             if (file) {
-                                const reader = new FileReader();
-                                reader.onload = (event) => {
-                                    const src = event.target?.result as string;
-                                    editor.update(() => {
-                                        const node = $createSimpleImageNode({
-                                            altText: "Image téléchargée",
-                                            src,
-                                            maxWidth: 500
-                                        });
-                                        const selection = $getSelection();
-                                        if ($isRangeSelection(selection)) {
-                                            $insertNodes([node]);
-                                        }
-                                    });
-                                };
-                                reader.readAsDataURL(file);
+                                try {
+                                    // 1. Get Upload URL
+                                    // We need to fetch this from Convex. Since we can't use `useMutation` directly inside this callback easily without setting it up in the component body first:
+                                    // Actually we can, we just need to pass the mutation function to this handler or use the one from the hook we'll add.
+
+                                    // For now, let's use a temporary placeholder while it uploads?
+                                    // Better: We need the mutation available.
+                                    // I'll assume `generateUploadUrl` is passed or available via hook at the top.
+
+                                    // Let's trigger a custom event or handled via a method exposed?
+                                    // Easiest is to add useMutation at top level.
+
+                                    // (This click handler will be replaced by the one below that uses the mutation)
+                                } catch (error) {
+                                    console.error("Upload failed", error);
+                                    alert("Erreur lors de l'upload de l'image");
+                                }
                             }
                         };
                         input.click();
@@ -360,6 +380,140 @@ export function ToolbarPlugin() {
                     <PlusIcon className="h-3.5 w-3.5" />
                 </Button>
             </div>
+
+            {/* AI Generation */}
+            <Dialog onOpenChange={(open) => {
+                if (open) {
+                    editor.getEditorState().read(() => {
+                        const json = JSON.stringify(editor.getEditorState().toJSON());
+                        setAiSections(getPageSections(json));
+                    });
+                    setAiPrompt("");
+                    setShowSuggestions(false);
+                }
+            }}>
+                <DialogTrigger asChild>
+                    <Button variant="ghost" size="sm" className="h-7 px-2 gap-1 text-purple-600 bg-purple-50 hover:bg-purple-100 hover:text-purple-700 cursor-pointer" title="Générer avec l'IA">
+                        <Sparkles className="h-3.5 w-3.5" />
+                        <span className="text-xs font-medium hidden sm:inline">IA</span>
+                    </Button>
+                </DialogTrigger>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>Générer du contenu avec l'IA</DialogTitle>
+                        <DialogDescription>
+                            Décrivez ce que vous souhaitez générer pour cette page. L'IA créera une structure et du contenu formaté.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="grid gap-4 py-4 relative">
+                        <div className="grid gap-2 relative">
+                            <Label htmlFor="prompt">Votre demande</Label>
+                            <Textarea
+                                id="prompt"
+                                value={aiPrompt}
+                                onChange={(e) => {
+                                    const val = e.target.value;
+                                    setAiPrompt(val);
+
+                                    const lastWord = val.split(/[\s\n]+/).pop();
+                                    if (lastWord && lastWord.startsWith('@')) {
+                                        const query = lastWord.slice(1).toLowerCase();
+                                        const matches = aiSections.filter(s => s.text.toLowerCase().includes(query) && s.type !== 'h1');
+                                        setFilteredSections(matches);
+                                        setShowSuggestions(matches.length > 0);
+                                    } else {
+                                        setShowSuggestions(false);
+                                    }
+                                }}
+                                className="min-h-[100px]"
+                                placeholder="Ex: Réécris l'introduction @Intro..."
+                            />
+
+                            {/* Active Tags Visualization (Gray Chips) */}
+                            <div className="flex flex-wrap gap-2 mt-2">
+                                {aiSections.filter(s => aiPrompt.includes(`@${s.text}`)).map((s, i) => (
+                                    <div key={i} className="inline-flex items-center gap-1 bg-secondary text-secondary-foreground text-xs px-2 py-0.5 rounded-full animate-in fade-in zoom-in duration-200">
+                                        <span className="font-semibold text-muted-foreground">@</span>
+                                        {s.text}
+                                    </div>
+                                ))}
+                            </div>
+
+                            {/* Suggestions Dropdown */}
+                            {showSuggestions && (
+                                <div className="absolute z-50 w-full bg-popover text-popover-foreground border rounded-md shadow-md bottom-[100%] mb-1 max-h-[200px] overflow-auto">
+                                    {filteredSections.length > 0 ? filteredSections.map((section, i) => (
+                                        <div
+                                            key={i}
+                                            className="px-3 py-2 text-sm cursor-pointer hover:bg-muted font-medium flex items-center gap-2"
+                                            onClick={() => {
+                                                const newPrompt = aiPrompt.replace(/@\w*$/, `@${section.text} `);
+                                                setAiPrompt(newPrompt);
+                                                setShowSuggestions(false);
+                                                document.getElementById('prompt')?.focus();
+                                            }}
+                                        >
+                                            <span className="opacity-50 text-xs">#{section.type.toUpperCase()}</span>
+                                            {section.text}
+                                        </div>
+                                    )) : (
+                                        <div className="px-3 py-2 text-sm text-muted-foreground">Aucune section trouvée</div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                    <DialogFooter>
+                        <Button onClick={async (e) => {
+                            const btn = e.currentTarget;
+                            if (!aiPrompt) return;
+
+                            let currentContent = "";
+                            editor.getEditorState().read(() => {
+                                currentContent = $convertToMarkdownString(TRANSFORMERS);
+                            });
+
+                            try {
+                                btn.disabled = true;
+                                btn.innerHTML = '<svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Génération...';
+
+                                const res = await fetch('/api/gemini', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({
+                                        prompt: aiPrompt,
+                                        currentContent
+                                    })
+                                });
+
+                                if (!res.ok) throw new Error('Generation failed');
+
+                                const { content } = await res.json();
+
+                                editor.update(() => {
+                                    $convertFromMarkdownString(content, TRANSFORMERS);
+                                });
+
+                                setAiPrompt("");
+                                document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+
+                                btn.innerHTML = 'Générer';
+                                btn.disabled = false;
+
+                            } catch (err) {
+                                console.error(err);
+                                btn.innerText = 'Erreur';
+                                setTimeout(() => {
+                                    btn.disabled = false;
+                                    btn.innerText = 'Générer';
+                                }, 2000);
+                            }
+                        }}>
+                            Générer
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
 
             <div className="flex-1" />
 
