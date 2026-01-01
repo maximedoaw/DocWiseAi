@@ -154,7 +154,9 @@ export function DocumentStructureSidebar({ projectId, pages, activePageId, onPag
                                                     <span className="text-xs text-muted-foreground font-mono bg-muted px-1.5 py-0.5 rounded">
                                                         {index + 1}
                                                     </span>
-                                                    <span className="truncate">{realTitle}</span>
+                                                    {realTitle !== "Nouvelle Page" && (
+                                                        <span className="truncate">{realTitle}</span>
+                                                    )}
                                                 </span>
                                             </AccordionTrigger>
 
@@ -189,7 +191,12 @@ export function DocumentStructureSidebar({ projectId, pages, activePageId, onPag
                                                             )}
                                                         >
                                                             <Hash className="w-3 h-3 opacity-50 shrink-0 group-hover/item:text-primary" />
-                                                            <span className="truncate flex-1" title={section.text}>{section.text}</span>
+                                                            <span className={cn(
+                                                                "flex-1 min-w-0 pr-2 truncate",
+                                                                section.type === "h2" ? "font-medium text-sm" : "text-muted-foreground ml-2 text-sm"
+                                                            )} title={section.text}>
+                                                                {section.text}
+                                                            </span>
                                                         </div>
                                                     ))}
                                                 </div>

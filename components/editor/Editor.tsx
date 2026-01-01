@@ -29,6 +29,8 @@ import { DocumentStructureSidebar } from "./plugins/DocumentStructureSidebar"
 import { BannerNode } from "@/components/editor/nodes/BannerNode"
 import { SimpleImageNode } from "@/components/editor/nodes/SimpleImageNode"
 import ContextMenuPlugin from "./plugins/ContextMenuPlugin"
+import { SuggestionNode } from "@/components/editor/nodes/SuggestionNode"
+import { SuggestionPlugin } from "./plugins/SuggestionPlugin"
 import { TablePlugin } from "@lexical/react/LexicalTablePlugin"
 import { PageBreakNode } from "@/components/editor/nodes/PageBreakNode"
 import { FloatingTextFormatMenu } from "./plugins/FloatingTextFormatMenu"
@@ -277,7 +279,8 @@ export const Editor = forwardRef<any, EditorProps>(({ projectId, pageId, initial
             LinkNode,
             PageBreakNode,
             BannerNode,
-            SimpleImageNode
+            SimpleImageNode,
+            SuggestionNode
         ]
     }
 
@@ -307,6 +310,7 @@ export const Editor = forwardRef<any, EditorProps>(({ projectId, pageId, initial
                     <ContextMenuPlugin />
                     <MarkdownShortcutPlugin transformers={TRANSFORMERS} />
                     <FloatingTextFormatMenu />
+                    <SuggestionPlugin />
                     <InitialContentPlugin initialContent={initialContent} pageId={pageId} />
                     <AutoSavePlugin projectId={projectId} pageId={pageId} />
                     <EditorRefPlugin projectId={projectId} pageId={pageId} ref={ref} />

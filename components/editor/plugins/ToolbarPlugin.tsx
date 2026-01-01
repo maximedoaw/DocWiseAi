@@ -1,7 +1,7 @@
 "use client"
 
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext"
-import { $getSelection, $isRangeSelection, FORMAT_TEXT_COMMAND, FORMAT_ELEMENT_COMMAND, UNDO_COMMAND, REDO_COMMAND, $insertNodes } from "lexical"
+import { $getSelection, $isRangeSelection, FORMAT_TEXT_COMMAND, FORMAT_ELEMENT_COMMAND, UNDO_COMMAND, REDO_COMMAND, $insertNodes, $getRoot, $createParagraphNode } from "lexical"
 import { $patchStyleText } from "@lexical/selection"
 import {
     Bold,
@@ -32,7 +32,9 @@ import {
     XCircle,
     MoreHorizontal,
     Image as ImageIcon,
-    Sparkles
+    Sparkles,
+    Mic,
+    MicOff
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
@@ -53,9 +55,12 @@ import { api } from "@/convex/_generated/api"
 import { getPageSections, Section } from "./DocumentStructureSidebar"
 import { $convertFromMarkdownString, $convertToMarkdownString, TRANSFORMERS } from "@lexical/markdown"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
+import { AIReviewDialog } from "./AIReviewDialog"
+import { $applyDiffAsSuggestions } from "@/lib/lexical-diff"
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import { Loader2 } from "lucide-react"
+import SpeechRecognition, { useSpeechRecognition } from 'react-speech-recognition';
 
 const TEXT_COLORS = [
     { name: "Noir", value: "#000000" },
@@ -103,10 +108,29 @@ export function ToolbarPlugin() {
 
     // AI Autocomplete State
     const [aiPrompt, setAiPrompt] = useState("")
+    const [basePrompt, setBasePrompt] = useState("")
     const [aiSections, setAiSections] = useState<Section[]>([])
     const [filteredSections, setFilteredSections] = useState<Section[]>([])
     const [showSuggestions, setShowSuggestions] = useState(false)
     const [suggestionIndex, setSuggestionIndex] = useState(0)
+
+    const {
+        transcript,
+        listening,
+        resetTranscript,
+        browserSupportsSpeechRecognition
+    } = useSpeechRecognition();
+
+    useEffect(() => {
+        if (listening) {
+            setAiPrompt(basePrompt + (basePrompt && transcript ? " " : "") + transcript);
+        }
+    }, [transcript, listening, basePrompt]);
+
+    // AI Review State
+    const [aiReviewOpen, setAiReviewOpen] = useState(false)
+    const [aiPendingContent, setAiPendingContent] = useState("")
+    const [aiOriginalContent, setAiOriginalContent] = useState("")
 
     // Mutation for file upload
     const generateUploadUrl = useMutation(api.files.generateUploadUrl);
@@ -154,7 +178,7 @@ export function ToolbarPlugin() {
     }
 
     return (
-        <div className="flex flex-nowrap overflow-x-auto items-center gap-1 p-2 border-b border-border/50 bg-muted/20 rounded-t-lg sticky top-0 z-10 backdrop-blur shrink-0 min-h-[50px]">
+        <div className="flex flex-wrap items-center gap-1 p-2 border-b border-border/50 bg-muted/20 rounded-t-lg sticky top-0 z-10 backdrop-blur shrink-0 min-h-[50px]">
             {/* History Controls */}
             <div className="flex items-center gap-0.5">
                 <Button variant="ghost" size="sm" className="h-7 w-7 p-0 cursor-pointer" onClick={() => editor.dispatchCommand(UNDO_COMMAND, undefined)} title="Annuler">
@@ -408,33 +432,56 @@ export function ToolbarPlugin() {
                     <div className="grid gap-4 py-4 relative">
                         <div className="grid gap-2 relative">
                             <Label htmlFor="prompt">Votre demande</Label>
-                            <Textarea
-                                id="prompt"
-                                value={aiPrompt}
-                                onChange={(e) => {
-                                    const val = e.target.value;
-                                    setAiPrompt(val);
+                            <div className="relative">
+                                <Textarea
+                                    id="prompt"
+                                    value={aiPrompt}
+                                    onChange={(e) => {
+                                        const val = e.target.value;
+                                        setAiPrompt(val);
 
-                                    const lastWord = val.split(/[\s\n]+/).pop();
-                                    if (lastWord && lastWord.startsWith('@')) {
-                                        const query = lastWord.slice(1).toLowerCase();
-                                        const matches = aiSections.filter(s => s.text.toLowerCase().includes(query) && s.type !== 'h1');
-                                        setFilteredSections(matches);
-                                        setShowSuggestions(matches.length > 0);
-                                    } else {
-                                        setShowSuggestions(false);
-                                    }
-                                }}
-                                className="min-h-[100px]"
-                                placeholder="Ex: Réécris l'introduction @Intro..."
-                            />
+                                        const lastWord = val.split(/[\s\n]+/).pop();
+                                        if (lastWord && lastWord.startsWith('@')) {
+                                            const query = lastWord.slice(1).toLowerCase();
+                                            const matches = aiSections.filter(s => s.text.toLowerCase().includes(query) && s.type !== 'h1');
+                                            setFilteredSections(matches);
+                                            setShowSuggestions(matches.length > 0);
+                                        } else {
+                                            setShowSuggestions(false);
+                                        }
+                                    }}
+                                    className="min-h-[100px] pr-8"
+                                    placeholder="Ex: Réécris l'introduction @Intro..."
+                                />
+                                <Button
+                                    size="icon"
+                                    variant="ghost"
+                                    className={cn("h-8 w-8 absolute right-2 top-2 text-muted-foreground hover:text-purple-600", listening && "text-red-500 animate-pulse")}
+                                    onClick={() => {
+                                        if (!browserSupportsSpeechRecognition) {
+                                            alert("Votre navigateur ne supporte pas la reconnaissance vocale.");
+                                            return;
+                                        }
+                                        if (listening) {
+                                            SpeechRecognition.stopListening();
+                                        } else {
+                                            setBasePrompt(aiPrompt);
+                                            resetTranscript();
+                                            SpeechRecognition.startListening({ continuous: true, language: 'fr-FR' });
+                                        }
+                                    }}
+                                    title="Dictée vocale"
+                                >
+                                    {listening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                                </Button>
+                            </div>
 
-                            {/* Active Tags Visualization (Gray Chips) */}
+                            {/* Active Tags Visualization (Orange/Gray) */}
                             <div className="flex flex-wrap gap-2 mt-2">
                                 {aiSections.filter(s => aiPrompt.includes(`@${s.text}`)).map((s, i) => (
-                                    <div key={i} className="inline-flex items-center gap-1 bg-secondary text-secondary-foreground text-xs px-2 py-0.5 rounded-full animate-in fade-in zoom-in duration-200">
-                                        <span className="font-semibold text-muted-foreground">@</span>
-                                        {s.text}
+                                    <div key={i} className="inline-flex items-center gap-1.5 bg-orange-50 dark:bg-orange-900/10 border border-orange-200/60 text-orange-600 dark:text-orange-400 text-xs px-2.5 py-1 rounded-full animate-in fade-in zoom-in slide-in-from-left-2 duration-300 shadow-sm hover:scale-105 transition-transform">
+                                        <div className="w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse" />
+                                        <span className="font-semibold tracking-tight">@{s.text}</span>
                                     </div>
                                 ))}
                             </div>
@@ -469,8 +516,13 @@ export function ToolbarPlugin() {
                             if (!aiPrompt) return;
 
                             let currentContent = "";
+                            let selection = "";
                             editor.getEditorState().read(() => {
                                 currentContent = $convertToMarkdownString(TRANSFORMERS);
+                                const sel = $getSelection();
+                                if ($isRangeSelection(sel)) {
+                                    selection = sel.getTextContent();
+                                }
                             });
 
                             try {
@@ -482,31 +534,54 @@ export function ToolbarPlugin() {
                                     headers: { 'Content-Type': 'application/json' },
                                     body: JSON.stringify({
                                         prompt: aiPrompt,
-                                        currentContent
+                                        currentContent,
+                                        selection
                                     })
                                 });
 
-                                if (!res.ok) throw new Error('Generation failed');
+                                if (!res.ok) {
+                                    const errorData = await res.json();
+                                    console.error("AI API Error:", errorData);
+                                    throw new Error(errorData.details || errorData.error || "Unknown server error");
+                                }
 
                                 const { content } = await res.json();
 
                                 editor.update(() => {
-                                    $convertFromMarkdownString(content, TRANSFORMERS);
+                                    const selection = $getSelection();
+
+                                    // If we have an active range selection, apply diff only to it
+                                    if ($isRangeSelection(selection) && !selection.isCollapsed()) {
+                                        const originalText = selection.getTextContent();
+                                        const nodes = $applyDiffAsSuggestions(originalText, content);
+                                        selection.insertNodes(nodes);
+                                    } else {
+                                        // Fallback to full document replacement
+                                        const root = $getRoot();
+                                        const oldContent = $convertToMarkdownString(TRANSFORMERS);
+                                        root.clear();
+                                        const nodes = $applyDiffAsSuggestions(oldContent, content);
+                                        const p = $createParagraphNode();
+                                        nodes.forEach(node => p.append(node));
+                                        root.append(p);
+                                    }
                                 });
 
+                                // Reset prompt UI
                                 setAiPrompt("");
-                                document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
-
                                 btn.innerHTML = 'Générer';
                                 btn.disabled = false;
 
-                            } catch (err) {
-                                console.error(err);
-                                btn.innerText = 'Erreur';
+                                // Close input dialog
+                                document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+
+                            } catch (err: any) {
+                                console.error("Generation failed:", err);
+                                btn.innerHTML = 'Erreur: ' + (err.message.substring(0, 15) + '...');
                                 setTimeout(() => {
                                     btn.disabled = false;
-                                    btn.innerText = 'Générer';
-                                }, 2000);
+                                    btn.innerHTML = 'Générer';
+                                }, 3000);
                             }
                         }}>
                             Générer
@@ -566,7 +641,22 @@ export function ToolbarPlugin() {
                     </PopoverContent>
                 </Popover>
             </div>
-        </div>
+            {/* AI Review Dialog */}
+            <AIReviewDialog
+                open={aiReviewOpen}
+                onOpenChange={setAiReviewOpen}
+                originalContent={aiOriginalContent}
+                newContent={aiPendingContent}
+                onConfirm={() => {
+                    editor.update(() => {
+                        $convertFromMarkdownString(aiPendingContent, TRANSFORMERS);
+                    });
+                    setAiReviewOpen(false);
+                }}
+                onReject={() => {
+                    setAiReviewOpen(false);
+                }}
+            />
+        </div >
     )
 }
-

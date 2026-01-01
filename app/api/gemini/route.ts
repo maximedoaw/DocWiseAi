@@ -5,69 +5,108 @@ export async function POST(request: Request) {
     try {
         const apiKey = process.env.GEMINI_API_KEY;
         if (!apiKey) {
-            console.error("GEMINI_API_KEY is not set.");
-            return NextResponse.json({ error: "API Configuration Error" }, { status: 500 });
+            console.error("❌ ERROR: GEMINI_API_KEY is missing in environment variables.");
+            return NextResponse.json({ error: "Server Configuration Error: Missing API Key" }, { status: 500 });
         }
 
+        // 1. Validate Input
         const body = await request.json();
-        const { prompt, currentContent } = body;
-        
+        const { prompt, currentContent, selection } = body;
+
         if (!prompt) {
-            return NextResponse.json({ error: "Prompt is required" }, { status: 400 });
+            return NextResponse.json({ error: "Missing 'prompt' in request body" }, { status: 400 });
         }
 
+        console.log("🚀 [Gemini API] Received request:", { promptLength: prompt.length, contextLength: currentContent?.length, selectionLength: selection?.length });
+
+        // 2. Initialize Client
         const ai = new GoogleGenAI({ apiKey });
+
+        // 3. Construct System Instructions (Strict Mode)
+        const systemInstruction = `
+        ### ROLE: PRECISE DOCUMENT EDITOR.
         
-        const systemPrompt = `
-        YOU ARE A PRECISE DOCUMENT EDITOR.
+        ### CRITICAL RULE: NO CONVERSATIONAL FILLER
+        - DO NOT say "Sure", "I can help", "Here is the content", "Okay", "Here is the rewritten text", etc.
+        - DO NOT explain what you did.
+        - DO NOT use markdown code blocks (\`\`\`markdown).
+        - RETURN ONLY THE RAW MARKDOWN CONTENT.
+        - START YOUR RESPONSE DIRECTLY WITH THE TEXT.
         
-        INPUTS:
-        1. "CURRENT CONTENT" (The existing document in Markdown).
-        2. "USER PROMPT" (Instructions for changes).
+        TASK:
+        - Modify the document based on the prompt. 
+        - If "USER SELECTION" is provided:
+          1. Use "CONTEXT" (currentContent) to understand where the selection fits.
+          2. RETURN ONLY the rewritten version of the "USER SELECTION".
+          3. DO NOT return the full document.
+        - If "USER SELECTION" is empty:
+          1. Apply changes to the whole document.
+          2. Return the FULL updated document content.
         
-        YOUR TASK:
-        - Return the **FULL** updated document content in Markdown.
-        - The user's editor will REPLACE the entire document with your output.
-        - Therefore, your output must contain EVERYTHING: both the changed parts and the unchanged parts.
+        STYLING PREFERENCES:
+        - Bold: **text**
+        - Italic: _text_
+        - Underline: <u>text</u>
         
-        CRITICAL RULES FOR PRESERVATION:
-        1. **IDENTICAL COPY**: For any section or paragraph not related to the user's prompt, YOU MUST COPY IT WORD-FOR-WORD from the "CURRENT CONTENT".
-        2. **NO DRIFT**: Do not "improve" or "rephrase" parts of the text that the user did not ask you to touch.
-        3. **NO TRUNCATION**: Never shorten the document or use placeholders like "[...rest of text...]". Return the full text.
+        CONTEXT:
+        ${currentContent ? currentContent.substring(0, 30000) : "No context enabled."}
         
-        EDITING LOGIC:
-        - Locate the specific section(s) requested by the user (e.g., tagged with "@Intro" or described by context).
-        - Apply the changes ONLY to those specific areas.
-        - If a change affects the logic of other parts, you may update them, but be conservative.
-        - Stitch the modified sections back into the original text seamlessly.
-        
-        OUTPUT FORMAT:
-        - Raw Markdown only. No code blocks.
-        
-        CURRENT CONTENT:
-        ${currentContent ? currentContent.substring(0, 30000) : "No context provided."}
+        USER SELECTION:
+        ${selection || "No specific selection."}
         `;
 
-        const finalPrompt = `User Request: ${prompt}`;
-
-        // Using gemini-2.5-flash as requested and simplified contents
+        // 4. Call Gemini (Model: gemini-1.5-flash)
+        // Note: Using 'contents' array structure for compatibility with latest SDK
+        console.log("⏳ [Gemini API] Calling generateContent...");
+        
         const response = await ai.models.generateContent({
-             model: "gemini-2.5-flash",
-             contents: finalPrompt
+            model: "gemini-2.5-flash",
+            config: {
+                temperature: 0.3, // Lower temperature for more deterministic/precise editing
+                candidateCount: 1,
+            },
+            contents: [
+                {
+                    role: "user",
+                    parts: [
+                        { text: systemInstruction + "\n\n### USER REQUEST:\n" + prompt }
+                    ]
+                }
+            ]
         });
+
+        console.log("✅ [Gemini API] Response received.");
+
+        // 5. Extract Text Safely
+        // The SDK structure can vary. We check distinct possibilities.
+        let text = "";
         
-        const text = response.text;
-        
-        if (!text) {
-             throw new Error("No content generated");
+        if (typeof (response as any).text === 'function') {
+            text = (response as any).text();
+        } else if (typeof (response as any).text === 'string') {
+            text = (response as any).text;
+        } else if (response.candidates && response.candidates[0]?.content?.parts?.[0]?.text) {
+             text = response.candidates[0].content.parts[0].text;
         }
-        
+
+        // Clean up text
+        text = text?.trim();
+
+        if (!text) {
+            console.error("❌ [Gemini API] Empty response content:", JSON.stringify(response, null, 2));
+            throw new Error("Gemini produced empty content.");
+        }
+
         return NextResponse.json({ content: text });
+
     } catch (error: any) {
-        console.error("Gemini API Error:", error);
+        console.error("🔥 [Gemini API] FATAL ERROR:", error);
+        
+        // Return detailed error to client for debugging
         return NextResponse.json({ 
-            error: "Failed to generate content", 
-            details: error.message 
+            error: "Generation Failed", 
+            details: error.message || "Unknown error",
+            stack: error.stack
         }, { status: 500 });
     }
 }

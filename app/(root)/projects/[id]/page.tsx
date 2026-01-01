@@ -6,12 +6,12 @@ import { ProjectsSidebar } from "@/components/projects/ProjectsSidebar"
 import { ProjectsMobileNav } from "@/components/projects/ProjectsMobileNav"
 import { Editor } from "@/components/editor/Editor"
 import { Id } from "@/convex/_generated/dataModel"
-import { useParams } from "next/navigation"
+import { useParams, useSearchParams, useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { ArrowLeft, Loader, Save, LayoutGrid } from "lucide-react"
 import Link from "next/link"
 
-import { useState, useRef, useEffect } from "react"
+import { useState, useRef, useEffect, useCallback } from "react"
 import { toast } from "react-toastify"
 import { DocumentStructureSidebar } from "@/components/editor/plugins/DocumentStructureSidebar"
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
@@ -21,6 +21,9 @@ import { UserButton } from "@clerk/nextjs"
 
 export default function EditorPage() {
     const params = useParams()
+    const searchParams = useSearchParams()
+    const router = useRouter()
+
     const projectId = params.id as Id<"projects">
     const project = useQuery(api.projects.get, { id: projectId })
     const editorRef = useRef<any>(null)
@@ -35,12 +38,24 @@ export default function EditorPage() {
         setMounted(true)
     }, [])
 
-    // Set default active page when project loads
+    // Sync active page with URL or default
     useEffect(() => {
-        if (project && project.pages && project.pages.length > 0 && !activePageId) {
-            setActivePageId(project.pages[0].id)
+        if (project && project.pages && project.pages.length > 0) {
+            const pageParam = searchParams.get('page')
+            if (pageParam && project.pages.some((p: any) => p.id === pageParam)) {
+                if (activePageId !== pageParam) {
+                    setActivePageId(pageParam)
+                }
+            } else if (!activePageId) {
+                setActivePageId(project.pages[0].id)
+            }
         }
-    }, [project, activePageId])
+    }, [project, searchParams])
+
+    const handlePageSelect = useCallback((id: string) => {
+        setActivePageId(id)
+        router.push(`/projects/${projectId}?page=${id}`)
+    }, [projectId, router])
 
     const activePage = project?.pages?.find((p: { id: string }) => p.id === activePageId)
 
@@ -123,7 +138,7 @@ export default function EditorPage() {
                                     pages={project.pages || []}
                                     activePageId={activePageId}
                                     onPageSelect={(id) => {
-                                        setActivePageId(id)
+                                        handlePageSelect(id)
                                         setRightSidebarOpen(false)
                                     }}
                                 />
@@ -182,7 +197,7 @@ export default function EditorPage() {
                                     initialContent={activePage.content}
                                     ref={editorRef}
                                     pages={project.pages || []}
-                                    onPageSelect={setActivePageId}
+                                    onPageSelect={handlePageSelect}
                                 />
                             </div>
                         </div>
