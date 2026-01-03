@@ -1,7 +1,7 @@
 "use client"
 
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext"
-import { $getSelection, $isRangeSelection, FORMAT_TEXT_COMMAND, FORMAT_ELEMENT_COMMAND, UNDO_COMMAND, REDO_COMMAND, $insertNodes, $getRoot, $createParagraphNode } from "lexical"
+import { $getSelection, $isRangeSelection, FORMAT_TEXT_COMMAND, FORMAT_ELEMENT_COMMAND, UNDO_COMMAND, REDO_COMMAND, $insertNodes, $getRoot, $createParagraphNode, $isElementNode, $createTextNode } from "lexical"
 import { $patchStyleText } from "@lexical/selection"
 import {
     Bold,
@@ -55,12 +55,15 @@ import { api } from "@/convex/_generated/api"
 import { getPageSections, Section } from "./DocumentStructureSidebar"
 import { $convertFromMarkdownString, $convertToMarkdownString, TRANSFORMERS } from "@lexical/markdown"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
-import { AIReviewDialog } from "./AIReviewDialog"
+
 import { $applyDiffAsSuggestions } from "@/lib/lexical-diff"
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import { Loader2 } from "lucide-react"
 import SpeechRecognition, { useSpeechRecognition } from 'react-speech-recognition';
+import { $generateNodesFromDOM } from "@lexical/html"
+import { AIValidationFloatingMenu } from "./AIValidationFloatingMenu"
+import { $createSuggestionNode, ACCEPT_SUGGESTION_COMMAND, REJECT_SUGGESTION_COMMAND, $isSuggestionNode } from "../nodes/SuggestionNode"
 
 const TEXT_COLORS = [
     { name: "Noir", value: "#000000" },
@@ -131,6 +134,93 @@ export function ToolbarPlugin() {
     const [aiReviewOpen, setAiReviewOpen] = useState(false)
     const [aiPendingContent, setAiPendingContent] = useState("")
     const [aiOriginalContent, setAiOriginalContent] = useState("")
+
+    // AI Validation State
+    const [showValidation, setShowValidation] = useState(false)
+    const [menuPosition, setMenuPosition] = useState<{ top: number; left: number } | null>(null)
+
+    // Handle Validation Actions
+    const handleAcceptAI = useCallback(() => {
+        editor.update(() => {
+            // Find all pending suggestion nodes and accept them
+            const root = $getRoot();
+            const suggestions: any[] = [];
+            root.getAllTextNodes().forEach(n => {
+                // Optimization: SuggestionNodes are ElementNodes.
+            });
+            // Better: use dfs
+            const traverse = (node: any) => {
+                if ($isSuggestionNode(node)) {
+                    suggestions.push(node);
+                } else if ($isElementNode(node)) {
+                    node.getChildren().forEach(traverse);
+                }
+            }
+            root.getChildren().forEach(traverse);
+
+            suggestions.forEach(node => {
+                const children = node.getChildren();
+                for (const child of children) {
+                    node.insertBefore(child);
+                }
+                node.remove();
+            });
+        });
+
+        setShowValidation(false)
+        setMenuPosition(null)
+        editor.focus()
+    }, [editor])
+
+    const handleRejectAI = useCallback(() => {
+        editor.update(() => {
+            const root = $getRoot();
+            const suggestions: any[] = [];
+            const traverse = (node: any) => {
+                if ($isSuggestionNode(node)) {
+                    suggestions.push(node);
+                } else if ($isElementNode(node)) {
+                    node.getChildren().forEach(traverse);
+                }
+            }
+            root.getChildren().forEach(traverse);
+
+            suggestions.forEach(node => {
+                if (node.__originalText) {
+                    const textNode = $createTextNode(node.__originalText);
+                    node.replace(textNode);
+                } else {
+                    node.remove();
+                }
+            });
+        });
+
+        setShowValidation(false)
+        setMenuPosition(null)
+        editor.focus()
+    }, [editor])
+
+    // Helper to update menu position based on selection
+    const updateMenuPosition = useCallback(() => {
+        const selection = window.getSelection();
+        if (selection && selection.rangeCount > 0) {
+            const range = selection.getRangeAt(0);
+            const rect = range.getBoundingClientRect();
+            // Position above the selection
+
+            // Safety Clamp
+            const top = Math.max(80, rect.top - 20); // Maintain at least 80px from top (header clearance)
+            const left = Math.min(window.innerWidth - 50, Math.max(50, rect.left + (rect.width / 2)));
+
+            setMenuPosition({
+                top: top,
+                left: left
+            });
+        } else {
+            // Fallback to center if no selection or collapsed
+            setMenuPosition(null);
+        }
+    }, []);
 
     // Mutation for file upload
     const generateUploadUrl = useMutation(api.files.generateUploadUrl);
@@ -545,25 +635,72 @@ export function ToolbarPlugin() {
                                     throw new Error(errorData.details || errorData.error || "Unknown server error");
                                 }
 
-                                const { content } = await res.json();
+                                const { content } = await res.json(); // content is now HTML
 
                                 editor.update(() => {
-                                    const selection = $getSelection();
+                                    const parser = new DOMParser();
+                                    const dom = parser.parseFromString(content, "text/html");
+                                    const nodes = $generateNodesFromDOM(editor, dom);
 
-                                    // If we have an active range selection, apply diff only to it
+                                    // PATCH: Apply styles manually if needed (simple implementation for colors/bg)
+                                    // Helper to traverse DOM and apply styles to matching Lexical Nodes is complex because mapping is 1-to-many.
+                                    // Instead, we trust $generateNodesFromDOM but we might need to rely on the AI returning <span> with styles which TextNode supports if configured.
+                                    // Lexical's default HTML import often handles <b>, <i>, but style="..." support depends on node. 
+                                    // We will leave it as is for now, assuming standard tags requested in prompt.
+
+                                    const selection = $getSelection();
+                                    const groupId = Math.random().toString(36).substring(7);
+
+                                    // Smart Duplication Fix: Check if we are inserting a Header that duplicates the one immediately preceding the selection
+                                    let originalText = "";
+                                    let nodesToReplace: any[] = [];
+
+                                    if ($isRangeSelection(selection)) {
+                                        originalText = selection.getTextContent();
+                                    }
+
+                                    // Check for Heading Duplication
+                                    if (nodes.length > 0 && nodes[0].getType() === 'heading') {
+                                        // The AI returned a heading at the start.
+                                        // Check if our selection is 'inside' that section or immediately follows such a heading.
+                                        let anchorNode = null;
+                                        if ($isRangeSelection(selection)) {
+                                            anchorNode = selection.anchor.getNode();
+                                            // Normalize to element or block
+                                            if (anchorNode.getType() === 'text') {
+                                                anchorNode = anchorNode.getParent();
+                                            }
+                                        }
+
+                                        if (anchorNode) {
+                                            const prevSibling = anchorNode.getPreviousSibling();
+                                            if (prevSibling && prevSibling.getType() === 'heading') {
+                                                // Check if tags match or if text roughly matches?
+                                                // Or just simpler: If AI returns a header, and we are right after a header, assume we are replacing the specific section and thus the header too.
+                                                // Optimization: Look at the level (h1, h2).
+                                                // We add the previous header to the "Original Text" and remove it from DOM, 
+                                                // so the new SuggestionNode (containing the new header) effectively replaces it.
+
+                                                // @ts-ignore
+                                                if (prevSibling.getTag() === nodes[0].getTag()) { // Same level
+                                                    originalText = prevSibling.getTextContent() + "\n" + originalText;
+                                                    prevSibling.remove();
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // If we have an active range selection, replace it with Suggestion
                                     if ($isRangeSelection(selection) && !selection.isCollapsed()) {
-                                        const originalText = selection.getTextContent();
-                                        const nodes = $applyDiffAsSuggestions(originalText, content);
-                                        selection.insertNodes(nodes);
+                                        // Create Suggestion Node
+                                        const suggestionNode = $createSuggestionNode(originalText, groupId);
+                                        suggestionNode.append(...nodes); // Append new content as children
+                                        selection.insertNodes([suggestionNode]);
                                     } else {
-                                        // Fallback to full document replacement
-                                        const root = $getRoot();
-                                        const oldContent = $convertToMarkdownString(TRANSFORMERS);
-                                        root.clear();
-                                        const nodes = $applyDiffAsSuggestions(oldContent, content);
-                                        const p = $createParagraphNode();
-                                        nodes.forEach(node => p.append(node));
-                                        root.append(p);
+                                        // No selection: Just insert as suggestion (Addition)
+                                        const suggestionNode = $createSuggestionNode(originalText, groupId);
+                                        suggestionNode.append(...nodes);
+                                        $insertNodes([suggestionNode]);
                                     }
                                 });
 
@@ -574,6 +711,14 @@ export function ToolbarPlugin() {
 
                                 // Close input dialog
                                 document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+
+                                // Show Validation Menu
+                                // Small delay to let DOM update and ensure focus
+                                setTimeout(() => {
+                                    editor.focus();
+                                    updateMenuPosition();
+                                    setShowValidation(true);
+                                }, 50);
 
                             } catch (err: any) {
                                 console.error("Generation failed:", err);
@@ -641,22 +786,14 @@ export function ToolbarPlugin() {
                     </PopoverContent>
                 </Popover>
             </div>
-            {/* AI Review Dialog */}
-            <AIReviewDialog
-                open={aiReviewOpen}
-                onOpenChange={setAiReviewOpen}
-                originalContent={aiOriginalContent}
-                newContent={aiPendingContent}
-                onConfirm={() => {
-                    editor.update(() => {
-                        $convertFromMarkdownString(aiPendingContent, TRANSFORMERS);
-                    });
-                    setAiReviewOpen(false);
-                }}
-                onReject={() => {
-                    setAiReviewOpen(false);
-                }}
+            {/* AI Validation Menu */}
+            <AIValidationFloatingMenu
+                show={showValidation}
+                onAccept={handleAcceptAI}
+                onReject={handleRejectAI}
+                position={menuPosition}
             />
+
         </div >
     )
 }

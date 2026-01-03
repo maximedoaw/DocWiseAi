@@ -137,18 +137,19 @@ function SuggestionControls({ nodeKey, editor }: { nodeKey: NodeKey, editor: any
 
     return createPortal(
         <div
-            className="fixed z-50 flex items-center gap-1 bg-background border shadow-sm rounded-md p-1 animate-in fade-in zoom-in-95 duration-200"
+            className="fixed z-[9999] flex items-center gap-1 bg-background border border-border shadow-md rounded-md p-1 animate-in fade-in zoom-in-95 duration-200 pointer-events-auto"
             style={{ left: coords.x, top: coords.y }}
+            onMouseDown={(e) => e.stopPropagation()} // Prevent editor blur
         >
             <button
-                className="h-6 w-6 flex items-center justify-center text-green-600 hover:bg-green-50 rounded transition-colors"
+                className="h-6 w-6 flex items-center justify-center text-green-600 hover:bg-green-100 dark:hover:bg-green-900/40 rounded transition-colors"
                 onClick={() => editor.dispatchCommand(ACCEPT_SUGGESTION_COMMAND, nodeKey)}
                 title="Valider"
             >
                 <Check className="w-4 h-4" />
             </button>
             <button
-                className="h-6 w-6 flex items-center justify-center text-red-600 hover:bg-red-50 rounded transition-colors"
+                className="h-6 w-6 flex items-center justify-center text-red-600 hover:bg-red-100 dark:hover:bg-red-900/40 rounded transition-colors"
                 onClick={() => editor.dispatchCommand(REJECT_SUGGESTION_COMMAND, nodeKey)}
                 title="Rejeter"
             >

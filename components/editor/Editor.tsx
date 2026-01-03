@@ -240,16 +240,43 @@ function SidebarPlugin({ projectId, pages, activePageId, onPageSelect }: {
             pages={pages}
             activePageId={activePageId}
             onPageSelect={onPageSelect}
-            onSectionClick={(key) => {
+            onSectionClick={(val) => {
+                const { key, text, type } = JSON.parse(val);
                 editor.update(() => {
-                    const node = $getNodeByKey(key);
+                    let node = $getNodeByKey(key);
+
+                    // Fallback: Search by content if key failed
+                    if (!node) {
+                        const root = $getRoot();
+                        const children = root.getChildren();
+                        // Simple DFS or just root children (Headings are usually top level or nested in sections)
+                        // Traverse all nodes to find match
+                        // Use editor.getEditorState().read ... actually we are in update
+
+                        // Helper to find node
+                        const findMatch = (nodes: any[]): any => {
+                            for (const n of nodes) {
+                                if ((n.getType() === 'heading' || n.getType() === 'banner') && n.getTextContent() === text) {
+                                    return n;
+                                }
+                                // Check children if element
+                                if (n.getChildren) { // @ts-ignore
+                                    const match = findMatch(n.getChildren());
+                                    if (match) return match;
+                                }
+                            }
+                            return null;
+                        }
+                        node = findMatch(children);
+                    }
+
                     if (node) {
                         const element = editor.getElementByKey(node.getKey());
                         if (element) {
                             element.scrollIntoView({ behavior: "smooth", block: "center" });
                             // Select the node to give visual feedback
                             // @ts-ignore
-                            if (node.select) node.select();
+                            if (node.selectStart) node.selectStart();
                         }
                     }
                 });

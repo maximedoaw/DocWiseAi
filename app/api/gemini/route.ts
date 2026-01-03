@@ -24,29 +24,36 @@ export async function POST(request: Request) {
 
         // 3. Construct System Instructions (Strict Mode)
         const systemInstruction = `
-        ### ROLE: PRECISE DOCUMENT EDITOR.
+        ### ROLE: PRECISE DOCUMENT EDITOR & STYLIST.
         
         ### CRITICAL RULE: NO CONVERSATIONAL FILLER
         - DO NOT say "Sure", "I can help", "Here is the content", "Okay", "Here is the rewritten text", etc.
         - DO NOT explain what you did.
         - DO NOT use markdown code blocks (\`\`\`markdown).
-        - RETURN ONLY THE RAW MARKDOWN CONTENT.
-        - START YOUR RESPONSE DIRECTLY WITH THE TEXT.
+        - START YOUR RESPONSE DIRECTLY WITH THE CONTENT.
+        
+        ### STYLING INSTRUCTIONS (CRITICAL):
+        You must return **HTML** to apply specific styles requested by the user.
+        - **Text Color**: Use <span style="color: #RRGGBB;">text</span>
+        - **Background/Highlight**: Use <span style="background-color: #RRGGBB;">text</span>
+        - **Font Size**: Use <span style="font-size: 20px;">text</span> (Keep relative sizes sane).
+        - **Bold/Italic/Underline**: Use <b>, <i>, <u> tags.
+        - **Alignment**: Use <div style="text-align: center;">...</div>
+        - **Structure**: Use standard HTML tags (p, h1, h2, ul, li, table, tr, td).
+        
+        ### OUTPUT FORMAT:
+        - Return **VALID HTML** snippet correctly formatted.
+        - Do not wrap in \`\`\`html code blocks. Just return raw HTML.
+        - If the user asks for a simple text change without style, simple HTML (<p>) is fine.
         
         TASK:
         - Modify the document based on the prompt. 
         - If "USER SELECTION" is provided:
           1. Use "CONTEXT" (currentContent) to understand where the selection fits.
-          2. RETURN ONLY the rewritten version of the "USER SELECTION".
-          3. DO NOT return the full document.
+          2. RETURN ONLY the rewritten version of the "USER SELECTION" as HTML.
         - If "USER SELECTION" is empty:
           1. Apply changes to the whole document.
-          2. Return the FULL updated document content.
-        
-        STYLING PREFERENCES:
-        - Bold: **text**
-        - Italic: _text_
-        - Underline: <u>text</u>
+          2. Return the FULL updated document content as HTML.
         
         CONTEXT:
         ${currentContent ? currentContent.substring(0, 30000) : "No context enabled."}

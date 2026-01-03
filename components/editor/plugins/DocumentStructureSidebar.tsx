@@ -44,11 +44,15 @@ export function getPageSections(contentJSON: string): Section[] {
             if (node.type === "heading") {
                 const text = node.children?.[0]?.text || ""
                 if (text) {
-                    sections.push({
-                        type: node.tag,
-                        text: text,
-                        key: node.key // Extract Lexical Node Key
-                    })
+                    // Avoid consecutive duplicates
+                    const last = sections[sections.length - 1];
+                    if (!last || last.text !== text || last.type !== node.tag) {
+                        sections.push({
+                            type: node.tag,
+                            text: text,
+                            key: node.key // Extract Lexical Node Key
+                        })
+                    }
                 }
             } else if (node.children && Array.isArray(node.children)) {
                 node.children.forEach(traverse)
