@@ -34,7 +34,9 @@ import {
     Image as ImageIcon,
     Sparkles,
     Mic,
-    MicOff
+    MicOff,
+    Hash,
+    ChevronRight
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
@@ -63,7 +65,7 @@ import { Loader2 } from "lucide-react"
 import SpeechRecognition, { useSpeechRecognition } from 'react-speech-recognition';
 import { $generateNodesFromDOM } from "@lexical/html"
 import { AIValidationFloatingMenu } from "./AIValidationFloatingMenu"
-import { $createSuggestionNode, ACCEPT_SUGGESTION_COMMAND, REJECT_SUGGESTION_COMMAND, $isSuggestionNode } from "../nodes/SuggestionNode"
+import { $createSuggestionNode, $isSuggestionNode, REJECT_SUGGESTION_COMMAND } from "@/components/editor/nodes/SuggestionNode"
 
 const TEXT_COLORS = [
     { name: "Noir", value: "#000000" },
@@ -139,6 +141,207 @@ export function ToolbarPlugin() {
     const [showValidation, setShowValidation] = useState(false)
     const [menuPosition, setMenuPosition] = useState<{ top: number; left: number } | null>(null)
 
+    // Tag Badge State
+    const [selectedTargets, setSelectedTargets] = useState<Section[]>([])
+
+    // Helper to find range of nodes for a section
+    const getSectionNodes = useCallback((section: Section, rootNode?: any): any[] => {
+        let nodesToReplace: any[] = [];
+        const findNodes = (root: any) => {
+            const children = root.getChildren();
+            let startFound = false;
+            let currentLevel = parseInt(section.type.replace('h', ''));
+
+            for (const node of children) {
+                // Find the starting header
+                if (!startFound) {
+                    // 1. Try matching by key first (most reliable)
+                    if (section.key && node.getKey() === section.key) {
+                        startFound = true;
+                        nodesToReplace.push(node);
+                        continue;
+                    }
+
+                    // 2. Fallback to text matching
+                    if ($isElementNode(node) && node.getType() === 'heading') {
+                        const nodeText = node.getTextContent().trim().toLowerCase();
+                        const targetText = section.text.trim().toLowerCase();
+
+                        if (nodeText === targetText) {
+                            // @ts-ignore
+                            if (node.getTag() === section.type) {
+                                startFound = true;
+                                nodesToReplace.push(node);
+                                continue;
+                            }
+                        }
+                    }
+                } else {
+                    // Collect following nodes until next equal or higher level header
+                    if ($isElementNode(node) && node.getType() === 'heading') {
+                        // @ts-ignore
+                        const level = parseInt(node.getTag().replace('h', ''));
+                        if (level <= currentLevel) {
+                            break; // End of section
+                        }
+                    }
+                    nodesToReplace.push(node);
+                }
+            }
+        };
+
+        if (rootNode) {
+            findNodes(rootNode);
+        } else {
+            editor.getEditorState().read(() => findNodes($getRoot()));
+        }
+        return nodesToReplace;
+    }, [editor]);
+
+    const handleAIAction = async (btn?: HTMLButtonElement) => {
+        if (!aiPrompt && selectedTargets.length === 0) return;
+
+        let currentContent = "";
+        let selection = "";
+
+        editor.getEditorState().read(() => {
+            currentContent = $convertToMarkdownString(TRANSFORMERS);
+            const sel = $getSelection();
+            if ($isRangeSelection(sel)) {
+                selection = sel.getTextContent();
+            }
+
+            // If we have targeted sections, collect their content for context
+            if (selectedTargets.length > 0) {
+                selection = "Targeted Sections Content:\n";
+                selectedTargets.forEach(target => {
+                    const nodes = getSectionNodes(target);
+                    selection += `--- Section: ${target.text} ---\n`;
+                    nodes.forEach(n => {
+                        selection += n.getTextContent() + "\n";
+                    });
+                });
+            }
+        });
+
+        try {
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = '<svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Génération...';
+            }
+
+            const res = await fetch('/api/gemini', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    prompt: aiPrompt + (selectedTargets.length > 0 ? ` (Cible et réécris ces sections: ${selectedTargets.map(t => t.text).join(', ')})` : ""),
+                    currentContent,
+                    selection
+                })
+            });
+
+            if (!res.ok) {
+                const errorData = await res.json();
+                console.error("AI API Error:", errorData);
+                if (res.status === 503) {
+                    throw new Error("L'IA est actuellement surchargée par un grand nombre de demandes. Veuillez réessayer dans quelques instants.");
+                }
+                throw new Error(errorData.details || errorData.error || "Une erreur inconnue est survenue lors de la génération.");
+            }
+
+            let { content } = await res.json();
+
+            // Clean markdown code blocks if present
+            content = content.replace(/```(?:html|markdown)?\n?([\s\S]*?)```/g, '$1').trim();
+
+            editor.update(() => {
+                console.log("AI Generation Content received, length:", content.length);
+                const parser = new DOMParser();
+                const dom = parser.parseFromString(content, "text/html");
+                const nodes = $generateNodesFromDOM(editor, dom);
+                console.log("Generated nodes count:", nodes.length);
+
+                const selection = $getSelection();
+                const groupId = Math.random().toString(36).substring(7);
+
+                if (selectedTargets.length > 0) {
+                    console.log("Targeting sections:", selectedTargets.map(t => t.text));
+                    const actualNodesToDelete: any[] = [];
+                    const root = $getRoot();
+                    selectedTargets.forEach(target => {
+                        const nodes = getSectionNodes(target, root);
+                        actualNodesToDelete.push(...nodes);
+                    });
+
+                    console.log("Nodes found to replace:", actualNodesToDelete.length);
+
+                    const originalText = actualNodesToDelete.map(n => {
+                        if ($isElementNode(n) && n.getType() === 'heading') {
+                            // @ts-ignore
+                            const level = n.getTag().replace('h', '');
+                            return '#'.repeat(parseInt(level)) + ' ' + n.getTextContent();
+                        }
+                        return n.getTextContent();
+                    }).join("\n");
+
+                    const suggestionNode = $createSuggestionNode(originalText, groupId);
+                    suggestionNode.append(...nodes);
+
+                    if (actualNodesToDelete.length > 0) {
+                        const first = actualNodesToDelete[0];
+                        first.replace(suggestionNode);
+                        actualNodesToDelete.slice(1).forEach(n => n.remove());
+                    } else {
+                        console.warn("No nodes found for targets, appending to root.");
+                        $getRoot().append(suggestionNode);
+                    }
+                } else {
+                    const originalText = ($isRangeSelection(selection) && !selection.isCollapsed()) ? selection.getTextContent() : "";
+                    const suggestionNode = $createSuggestionNode(originalText, groupId);
+                    suggestionNode.append(...nodes);
+
+                    if ($isRangeSelection(selection)) {
+                        console.log("Applying to range selection");
+                        $insertNodes([suggestionNode]);
+                    } else {
+                        console.log("No range selection, appending to root or last selection point");
+                        // Fallback: append to end of document if no selection
+                        const root = $getRoot();
+                        const lastChild = root.getLastChild();
+                        if (lastChild) {
+                            lastChild.insertAfter(suggestionNode);
+                        } else {
+                            root.append(suggestionNode);
+                        }
+                    }
+                }
+            });
+
+            setAiPrompt("");
+            setSelectedTargets([]);
+            if (btn) {
+                btn.innerHTML = 'Générer';
+                btn.disabled = false;
+            }
+            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+            setTimeout(() => {
+                editor.focus();
+                updateMenuPosition();
+                setShowValidation(true);
+            }, 100);
+
+        } catch (err: any) {
+            console.error("Generation failed:", err);
+            if (btn) {
+                btn.innerHTML = 'Erreur: ' + (err.message.substring(0, 15) + '...');
+                setTimeout(() => {
+                    btn.disabled = false;
+                    btn.innerHTML = 'Générer';
+                }, 3000);
+            }
+        }
+    };
+
     // Handle Validation Actions
     const handleAcceptAI = useCallback(() => {
         editor.update(() => {
@@ -186,12 +389,7 @@ export function ToolbarPlugin() {
             root.getChildren().forEach(traverse);
 
             suggestions.forEach(node => {
-                if (node.__originalText) {
-                    const textNode = $createTextNode(node.__originalText);
-                    node.replace(textNode);
-                } else {
-                    node.remove();
-                }
+                editor.dispatchCommand(REJECT_SUGGESTION_COMMAND, node.getKey());
             });
         });
 
@@ -202,24 +400,35 @@ export function ToolbarPlugin() {
 
     // Helper to update menu position based on selection
     const updateMenuPosition = useCallback(() => {
-        const selection = window.getSelection();
-        if (selection && selection.rangeCount > 0) {
-            const range = selection.getRangeAt(0);
-            const rect = range.getBoundingClientRect();
-            // Position above the selection
+        // Use requestAnimationFrame to ensure we run after layout updates
+        requestAnimationFrame(() => {
+            const selection = window.getSelection();
+            if (selection && selection.rangeCount > 0) {
+                const range = selection.getRangeAt(0);
+                const rect = range.getBoundingClientRect();
 
-            // Safety Clamp
-            const top = Math.max(80, rect.top - 20); // Maintain at least 80px from top (header clearance)
-            const left = Math.min(window.innerWidth - 50, Math.max(50, rect.left + (rect.width / 2)));
+                // Viewport Safety
+                const viewportWidth = window.innerWidth;
+                const viewportHeight = window.innerHeight;
 
-            setMenuPosition({
-                top: top,
-                left: left
-            });
-        } else {
-            // Fallback to center if no selection or collapsed
-            setMenuPosition(null);
-        }
+                // Center horizontally relative to selection, but clamp to screen edges
+                let left = rect.left + (rect.width / 2);
+                left = Math.max(20, Math.min(viewportWidth - 20, left)); // Keep 20px padding from edges
+
+                // Position above, but flip to below if not enough space top
+                let top = rect.top - 60; // Default: Above
+                if (top < 100) { // If too close to header/top
+                    top = rect.bottom + 20; // Flip to below
+                }
+
+                setMenuPosition({
+                    top: top,
+                    left: left
+                });
+            } else {
+                setMenuPosition(null);
+            }
+        });
     }, []);
 
     // Mutation for file upload
@@ -503,6 +712,7 @@ export function ToolbarPlugin() {
                         setAiSections(getPageSections(json));
                     });
                     setAiPrompt("");
+                    setSelectedTargets([]);
                     setShowSuggestions(false);
                 }
             }}>
@@ -522,32 +732,82 @@ export function ToolbarPlugin() {
                     <div className="grid gap-4 py-4 relative">
                         <div className="grid gap-2 relative">
                             <Label htmlFor="prompt">Votre demande</Label>
-                            <div className="relative">
-                                <Textarea
-                                    id="prompt"
-                                    value={aiPrompt}
-                                    onChange={(e) => {
-                                        const val = e.target.value;
-                                        setAiPrompt(val);
 
-                                        const lastWord = val.split(/[\s\n]+/).pop();
-                                        if (lastWord && lastWord.startsWith('@')) {
-                                            const query = lastWord.slice(1).toLowerCase();
-                                            const matches = aiSections.filter(s => s.text.toLowerCase().includes(query) && s.type !== 'h1');
-                                            setFilteredSections(matches);
-                                            setShowSuggestions(matches.length > 0);
-                                        } else {
-                                            setShowSuggestions(false);
-                                        }
-                                    }}
-                                    className="min-h-[100px] pr-8"
-                                    placeholder="Ex: Réécris l'introduction @Intro..."
-                                />
+                            <div className="relative group transition-all duration-200">
+                                <div
+                                    className="min-h-[120px] w-full rounded-md border border-input bg-background/50 backdrop-blur-sm px-3 py-2 text-sm shadow-sm ring-offset-background focus-within:ring-2 focus-within:ring-orange-500/20 focus-within:border-orange-500/50 flex flex-wrap gap-2 items-start transition-all cursor-text"
+                                    onClick={() => document.getElementById('ai-prompt-input')?.focus()}
+                                >
+                                    {/* Inline Orange Badges */}
+                                    {selectedTargets.map((target, i) => (
+                                        <div
+                                            key={i}
+                                            className="inline-flex items-center gap-1 bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400 text-[11px] font-bold px-2 py-0.5 rounded-full border border-orange-200/50 animate-in zoom-in-95 duration-200 group/badge whitespace-nowrap"
+                                        >
+                                            <Hash className="w-3 h-3 opacity-70" />
+                                            <span className="max-w-[150px] truncate">{target.text}</span>
+                                            <button
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setSelectedTargets(prev => prev.filter((_, idx) => idx !== i));
+                                                }}
+                                                className="ml-1 hover:text-orange-900 dark:hover:text-orange-200 focus:outline-none transition-colors"
+                                            >
+                                                <XCircle className="w-3.5 h-3.5" />
+                                            </button>
+                                        </div>
+                                    ))}
+
+                                    <textarea
+                                        id="ai-prompt-input"
+                                        value={aiPrompt}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Backspace' && aiPrompt === "" && selectedTargets.length > 0) {
+                                                setSelectedTargets(prev => prev.slice(0, -1));
+                                            }
+                                            if (e.key === 'Enter') {
+                                                if (showSuggestions && filteredSections.length > 0) {
+                                                    e.preventDefault();
+                                                    const section = filteredSections[0];
+                                                    if (!selectedTargets.some(t => t.text === section.text)) {
+                                                        setSelectedTargets(prev => [...prev, section]);
+                                                    }
+                                                    setAiPrompt(prev => prev.replace(/@\w*$/, "").trim() + " ");
+                                                    setShowSuggestions(false);
+                                                } else if (!e.shiftKey) {
+                                                    e.preventDefault();
+                                                    handleAIAction();
+                                                }
+                                            }
+                                        }}
+                                        onChange={(e) => {
+                                            const val = e.target.value;
+                                            setAiPrompt(val);
+                                            const lastWord = val.split(/[\s\n]+/).pop();
+                                            if (lastWord && lastWord.startsWith('@')) {
+                                                const query = lastWord.slice(1).toLowerCase();
+                                                const matches = aiSections.filter(s => s.text.toLowerCase().includes(query) && s.type !== 'h1');
+                                                setFilteredSections(matches);
+                                                setShowSuggestions(matches.length > 0);
+                                            } else {
+                                                setShowSuggestions(false);
+                                            }
+                                        }}
+                                        className="flex-1 bg-transparent border-none outline-none resize-none min-w-[150px] min-h-[200px] p-0 focus-visible:ring-0 leading-relaxed"
+                                        placeholder={selectedTargets.length > 0 ? "" : "Ex: Réécris l'introduction @Intro..."}
+                                    />
+                                </div>
+                                {!aiPrompt && (
+                                    <div className="absolute top-2 left-3 text-muted-foreground pointer-events-none text-sm opacity-50">
+                                        Ex: Réécris l'introduction @Intro...
+                                    </div>
+                                )}
                                 <Button
                                     size="icon"
                                     variant="ghost"
-                                    className={cn("h-8 w-8 absolute right-2 top-2 text-muted-foreground hover:text-purple-600", listening && "text-red-500 animate-pulse")}
-                                    onClick={() => {
+                                    className={cn("h-8 w-8 absolute right-2 bottom-2 text-muted-foreground hover:text-orange-600 transition-colors", listening && "text-red-500 animate-pulse")}
+                                    onClick={(e) => {
+                                        e.stopPropagation();
                                         if (!browserSupportsSpeechRecognition) {
                                             alert("Votre navigateur ne supporte pas la reconnaissance vocale.");
                                             return;
@@ -566,169 +826,36 @@ export function ToolbarPlugin() {
                                 </Button>
                             </div>
 
-                            {/* Active Tags Visualization (Orange/Gray) */}
-                            <div className="flex flex-wrap gap-2 mt-2">
-                                {aiSections.filter(s => aiPrompt.includes(`@${s.text}`)).map((s, i) => (
-                                    <div key={i} className="inline-flex items-center gap-1.5 bg-orange-50 dark:bg-orange-900/10 border border-orange-200/60 text-orange-600 dark:text-orange-400 text-xs px-2.5 py-1 rounded-full animate-in fade-in zoom-in slide-in-from-left-2 duration-300 shadow-sm hover:scale-105 transition-transform">
-                                        <div className="w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse" />
-                                        <span className="font-semibold tracking-tight">@{s.text}</span>
-                                    </div>
-                                ))}
-                            </div>
-
                             {/* Suggestions Dropdown */}
                             {showSuggestions && (
-                                <div className="absolute z-50 w-full bg-popover text-popover-foreground border rounded-md shadow-md bottom-[100%] mb-1 max-h-[200px] overflow-auto">
-                                    {filteredSections.length > 0 ? filteredSections.map((section, i) => (
+                                <div className="absolute z-[60] w-full bg-popover text-popover-foreground border rounded-md shadow-md bottom-[100%] mb-1 max-h-[200px] overflow-auto">
+                                    {filteredSections.map((section, i) => (
                                         <div
                                             key={i}
-                                            className="px-3 py-2 text-sm cursor-pointer hover:bg-muted font-medium flex items-center gap-2"
+                                            className="px-3 py-2 text-sm cursor-pointer hover:bg-muted font-medium flex items-center justify-between group"
                                             onClick={() => {
-                                                const newPrompt = aiPrompt.replace(/@\w*$/, `@${section.text} `);
-                                                setAiPrompt(newPrompt);
+                                                if (!selectedTargets.some(t => t.text === section.text)) {
+                                                    setSelectedTargets(prev => [...prev, section]);
+                                                }
+                                                // Keep prompt but remove the @ part
+                                                setAiPrompt(prev => prev.replace(/@\w*$/, "").trim() + " ");
                                                 setShowSuggestions(false);
                                                 document.getElementById('prompt')?.focus();
                                             }}
                                         >
-                                            <span className="opacity-50 text-xs">#{section.type.toUpperCase()}</span>
-                                            {section.text}
+                                            <div className="flex items-center gap-2">
+                                                <span className="opacity-50 text-xs">#{section.type.toUpperCase()}</span>
+                                                {section.text}
+                                            </div>
+                                            <ChevronRight className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
                                         </div>
-                                    )) : (
-                                        <div className="px-3 py-2 text-sm text-muted-foreground">Aucune section trouvée</div>
-                                    )}
+                                    ))}
                                 </div>
                             )}
                         </div>
                     </div>
                     <DialogFooter>
-                        <Button onClick={async (e) => {
-                            const btn = e.currentTarget;
-                            if (!aiPrompt) return;
-
-                            let currentContent = "";
-                            let selection = "";
-                            editor.getEditorState().read(() => {
-                                currentContent = $convertToMarkdownString(TRANSFORMERS);
-                                const sel = $getSelection();
-                                if ($isRangeSelection(sel)) {
-                                    selection = sel.getTextContent();
-                                }
-                            });
-
-                            try {
-                                btn.disabled = true;
-                                btn.innerHTML = '<svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Génération...';
-
-                                const res = await fetch('/api/gemini', {
-                                    method: 'POST',
-                                    headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({
-                                        prompt: aiPrompt,
-                                        currentContent,
-                                        selection
-                                    })
-                                });
-
-                                if (!res.ok) {
-                                    const errorData = await res.json();
-                                    console.error("AI API Error:", errorData);
-                                    throw new Error(errorData.details || errorData.error || "Unknown server error");
-                                }
-
-                                const { content } = await res.json(); // content is now HTML
-
-                                editor.update(() => {
-                                    const parser = new DOMParser();
-                                    const dom = parser.parseFromString(content, "text/html");
-                                    const nodes = $generateNodesFromDOM(editor, dom);
-
-                                    // PATCH: Apply styles manually if needed (simple implementation for colors/bg)
-                                    // Helper to traverse DOM and apply styles to matching Lexical Nodes is complex because mapping is 1-to-many.
-                                    // Instead, we trust $generateNodesFromDOM but we might need to rely on the AI returning <span> with styles which TextNode supports if configured.
-                                    // Lexical's default HTML import often handles <b>, <i>, but style="..." support depends on node. 
-                                    // We will leave it as is for now, assuming standard tags requested in prompt.
-
-                                    const selection = $getSelection();
-                                    const groupId = Math.random().toString(36).substring(7);
-
-                                    // Smart Duplication Fix: Check if we are inserting a Header that duplicates the one immediately preceding the selection
-                                    let originalText = "";
-                                    let nodesToReplace: any[] = [];
-
-                                    if ($isRangeSelection(selection)) {
-                                        originalText = selection.getTextContent();
-                                    }
-
-                                    // Check for Heading Duplication
-                                    if (nodes.length > 0 && nodes[0].getType() === 'heading') {
-                                        // The AI returned a heading at the start.
-                                        // Check if our selection is 'inside' that section or immediately follows such a heading.
-                                        let anchorNode = null;
-                                        if ($isRangeSelection(selection)) {
-                                            anchorNode = selection.anchor.getNode();
-                                            // Normalize to element or block
-                                            if (anchorNode.getType() === 'text') {
-                                                anchorNode = anchorNode.getParent();
-                                            }
-                                        }
-
-                                        if (anchorNode) {
-                                            const prevSibling = anchorNode.getPreviousSibling();
-                                            if (prevSibling && prevSibling.getType() === 'heading') {
-                                                // Check if tags match or if text roughly matches?
-                                                // Or just simpler: If AI returns a header, and we are right after a header, assume we are replacing the specific section and thus the header too.
-                                                // Optimization: Look at the level (h1, h2).
-                                                // We add the previous header to the "Original Text" and remove it from DOM, 
-                                                // so the new SuggestionNode (containing the new header) effectively replaces it.
-
-                                                // @ts-ignore
-                                                if (prevSibling.getTag() === nodes[0].getTag()) { // Same level
-                                                    originalText = prevSibling.getTextContent() + "\n" + originalText;
-                                                    prevSibling.remove();
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    // If we have an active range selection, replace it with Suggestion
-                                    if ($isRangeSelection(selection) && !selection.isCollapsed()) {
-                                        // Create Suggestion Node
-                                        const suggestionNode = $createSuggestionNode(originalText, groupId);
-                                        suggestionNode.append(...nodes); // Append new content as children
-                                        selection.insertNodes([suggestionNode]);
-                                    } else {
-                                        // No selection: Just insert as suggestion (Addition)
-                                        const suggestionNode = $createSuggestionNode(originalText, groupId);
-                                        suggestionNode.append(...nodes);
-                                        $insertNodes([suggestionNode]);
-                                    }
-                                });
-
-                                // Reset prompt UI
-                                setAiPrompt("");
-                                btn.innerHTML = 'Générer';
-                                btn.disabled = false;
-
-                                // Close input dialog
-                                document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
-
-                                // Show Validation Menu
-                                // Small delay to let DOM update and ensure focus
-                                setTimeout(() => {
-                                    editor.focus();
-                                    updateMenuPosition();
-                                    setShowValidation(true);
-                                }, 50);
-
-                            } catch (err: any) {
-                                console.error("Generation failed:", err);
-                                btn.innerHTML = 'Erreur: ' + (err.message.substring(0, 15) + '...');
-                                setTimeout(() => {
-                                    btn.disabled = false;
-                                    btn.innerHTML = 'Générer';
-                                }, 3000);
-                            }
-                        }}>
+                        <Button onClick={(e) => handleAIAction(e.currentTarget as HTMLButtonElement)}>
                             Générer
                         </Button>
                     </DialogFooter>

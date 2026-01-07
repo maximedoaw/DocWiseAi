@@ -4,13 +4,16 @@ import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext
 import {
     $createTextNode,
     $getNodeByKey,
+    $createParagraphNode,
     COMMAND_PRIORITY_EDITOR,
     LexicalCommand,
     NodeKey,
 } from "lexical";
+import { $createHeadingNode } from "@lexical/rich-text";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { $isSuggestionNode, SuggestionNode, ACCEPT_SUGGESTION_COMMAND, REJECT_SUGGESTION_COMMAND } from "../nodes/SuggestionNode";
+import { $isSuggestionNode, SuggestionNode, ACCEPT_SUGGESTION_COMMAND, REJECT_SUGGESTION_COMMAND } from "@/components/editor/nodes/SuggestionNode";
+import { $convertFromMarkdownString, TRANSFORMERS } from "@lexical/markdown";
 import { Check, X } from "lucide-react";
 
 export function SuggestionPlugin() {
@@ -67,16 +70,39 @@ export function SuggestionPlugin() {
                 editor.update(() => {
                     const node = $getNodeByKey(payload);
                     if ($isSuggestionNode(node)) {
-                        // Revert to original text
-                        // We might want to parse originalText if it had markdown? 
-                        // But usually originalText is just the plain text before change?
-                        // If it came from a diff, it's just text string.
-                        // We restore it as simple text.
-                        if (node.__originalText) {
-                            const textNode = $createTextNode(node.__originalText);
-                            node.replace(textNode);
+                        const original = node.__originalText;
+                        if (original) {
+                            const lines = original.split('\n');
+                            const restoredNodes = [];
+
+                            for (const line of lines) {
+                                // Basic heading detection
+                                const headingMatch = line.match(/^(#{1,6})\s(.*)/);
+                                if (headingMatch) {
+                                    const level = headingMatch[1].length;
+                                    const text = headingMatch[2];
+                                    const heading = $createHeadingNode(`h${level}` as any);
+                                    heading.append($createTextNode(text));
+                                    restoredNodes.push(heading);
+                                } else if (line.trim() !== "") {
+                                    const p = $createParagraphNode();
+                                    p.append($createTextNode(line));
+                                    restoredNodes.push(p);
+                                }
+                            }
+
+                            if (restoredNodes.length > 0) {
+                                // Replace the suggestion node with the first restored node, 
+                                // and insert the others after.
+                                const first = restoredNodes[0];
+                                node.replace(first);
+                                for (let i = 1; i < restoredNodes.length; i++) {
+                                    first.insertAfter(restoredNodes[i]);
+                                }
+                            } else {
+                                node.remove();
+                            }
                         } else {
-                            // If original text was empty (insertion), just remove.
                             node.remove();
                         }
                     }

@@ -24,15 +24,15 @@ export function AIValidationFloatingMenu({ show, onAccept, onReject, position }:
                     dragMomentum={false}
                     dragConstraints={{ left: 0, right: window.innerWidth, top: 0, bottom: window.innerHeight }} // Constrain to viewport
                     whileDrag={{ cursor: 'grabbing' }}
-                    className="fixed z-50 flex items-center gap-2 p-1.5 bg-background/90 backdrop-blur-md border shadow-lg rounded-full cursor-grab"
+                    className="fixed z-[9999] flex items-center gap-3 p-2 bg-background/95 backdrop-blur-md border border-primary/20 shadow-2xl rounded-full cursor-grab touch-none"
                     style={position ? {
                         top: position.top,
                         left: position.left,
-                        transform: 'translate(-50%, -100%)' // Center horizontally, place above
+                        transform: 'translate(-50%, 0)' // Just center horizontally
                     } : {
-                        top: '50%',
-                        right: '2rem',
-                        transform: 'translateY(-50%)'
+                        bottom: '2rem', // Default to bottom on mobile if no pos
+                        left: '50%',
+                        transform: 'translateX(-50%)'
                     }}
                 >
                     <div className="pl-3 pr-2 text-sm font-medium text-muted-foreground select-none">

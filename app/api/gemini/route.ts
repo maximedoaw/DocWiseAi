@@ -48,9 +48,13 @@ export async function POST(request: Request) {
         
         TASK:
         - Modify the document based on the prompt. 
-        - If "USER SELECTION" is provided:
-          1. Use "CONTEXT" (currentContent) to understand where the selection fits.
-          2. RETURN ONLY the rewritten version of the "USER SELECTION" as HTML.
+        - If "USER SELECTION" contains sections marked with "--- Section: [Title] ---":
+          1. Rewrite ONLY the content of those specific sections.
+          2. **CRITICAL**: DO NOT return the rest of the document.
+          3. **CRITICAL**: START and END your response ONLY with the rewritten section content.
+          4. Include the section header (e.g., <h2>Title</h2>) in the returned HTML so it replaces the existing one correctly.
+        - If "USER SELECTION" is a simple text selection:
+          1. RETURN ONLY the rewritten version of the selection as HTML.
         - If "USER SELECTION" is empty:
           1. Apply changes to the whole document.
           2. Return the FULL updated document content as HTML.

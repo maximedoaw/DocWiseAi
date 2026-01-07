@@ -22,8 +22,6 @@ export type SerializedSuggestionNode = Spread<
     SerializedElementNode
 >;
 
-// ...
-
 export function $createSuggestionNode(
     originalText: string,
     groupId: string,
@@ -67,17 +65,48 @@ export class SuggestionNode extends ElementNode {
     }
 
     createDOM(config: EditorConfig): HTMLElement {
-        const element = document.createElement('span');
-        addClassNamesToElement(element, 'suggestion-node relative bg-green-50/50 border-b-2 border-green-200 mx-1 rounded-sm px-0.5'); // Styling for the node itself
+        const element = document.createElement('div');
+        addClassNamesToElement(element, 'suggestion-node-container my-4 border-2 border-dashed border-green-200 rounded-lg overflow-hidden bg-white dark:bg-zinc-900 shadow-sm');
+
+        // 1. Original Content Header (The "Diff" part)
+        if (this.__originalText) {
+            const originalDiv = document.createElement('div');
+            originalDiv.className = 'suggestion-original-content bg-red-50/80 dark:bg-red-950/30 p-4 border-b border-red-100 dark:border-red-900/50';
+
+            const badge = document.createElement('span');
+            badge.className = 'inline-block px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300 mb-2';
+            badge.textContent = 'Original (Supprimé)';
+            originalDiv.appendChild(badge);
+
+            const content = document.createElement('div');
+            content.className = 'text-sm text-red-600 dark:text-red-400 line-through font-mono whitespace-pre-wrap leading-relaxed opacity-70';
+            content.textContent = this.__originalText;
+            originalDiv.appendChild(content);
+
+            element.appendChild(originalDiv);
+        }
+
+        // 2. Suggestion Container Label
+        const suggestionHeader = document.createElement('div');
+        suggestionHeader.className = 'suggestion-header bg-green-50/50 dark:bg-green-950/20 px-4 py-2 border-b border-green-100 dark:border-green-900/50 flex items-center justify-between';
+
+        const badge = document.createElement('span');
+        badge.className = 'inline-block px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300';
+        badge.textContent = 'Suggestion IA';
+        suggestionHeader.appendChild(badge);
+
+        element.appendChild(suggestionHeader);
+
+        // 3. This is where Lexical appends children. 
+        // We'll add a class to distinguish the suggested area.
+        addClassNamesToElement(element, 'suggestion-content-area p-4 bg-green-50/20 dark:bg-green-900/10');
+
         return element;
     }
 
     updateDOM(prevNode: SuggestionNode, dom: HTMLElement): boolean {
-        if (prevNode.__status !== this.__status) {
-            // Update styles based on status if needed, but we mostly rely on CSS classes
-            return true;
-        }
-        return false;
+        // Return true if status changed to trigger a re-render if needed
+        return prevNode.__status !== this.__status || prevNode.__originalText !== this.__originalText;
     }
 
     static importJSON(serializedNode: SerializedSuggestionNode): SuggestionNode {
@@ -86,9 +115,6 @@ export class SuggestionNode extends ElementNode {
             serializedNode.groupId,
         );
         node.__status = serializedNode.status;
-        node.setFormat(serializedNode.format);
-        node.setIndent(serializedNode.indent);
-        node.setDirection(serializedNode.direction);
         return node;
     }
 
@@ -103,19 +129,8 @@ export class SuggestionNode extends ElementNode {
         };
     }
 
+    // Since it's a block-level diff, we treat it as an element
     isInline(): boolean {
-        return true;
-    }
-
-    canInsertTextBefore(): boolean {
-        return false;
-    }
-
-    canInsertTextAfter(): boolean {
-        return false;
-    }
-
-    canBeEmpty(): boolean {
         return false;
     }
 }

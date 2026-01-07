@@ -3,6 +3,7 @@
 import { useMutation } from "convex/react"
 import { api } from "@/convex/_generated/api"
 import { useRouter } from "next/navigation"
+import { completeOnboarding } from "@/lib/actions/user.actions"
 
 import { Check, ChevronRight, ChevronLeft } from "lucide-react"
 
@@ -70,6 +71,7 @@ export default function NewProjectStepper() {
 
     const handleGenerate = async () => {
         try {
+            await completeOnboarding()
             const projectId = await createProject({
                 title: internshipData.role || "Nouveau Projet", // Fallback title
                 type: selectedTemplate || "BTS",

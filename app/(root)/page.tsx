@@ -16,13 +16,7 @@ export default function HomePage() {
   const { userId } = useAuth()
   const router = useRouter()
 
-  useEffect(() => {
-    if (userId) {
-      router.push("/onboarding")
-    }
-  }, [userId, router])
-
-  if (userId) return null
+  // Middleware handles redirection now
 
   return (
     <div className="min-h-screen bg-gray-900 selection:bg-primary/30 selection:text-primary-foreground">

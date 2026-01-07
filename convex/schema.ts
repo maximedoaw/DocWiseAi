@@ -7,6 +7,7 @@ export default defineSchema({
     email: v.string(),
     username: v.string(),
     avatarUrl: v.optional(v.string()),
+    onboardingCompleted: v.optional(v.boolean()),
   }),
 
   projects: defineTable({
