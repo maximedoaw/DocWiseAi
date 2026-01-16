@@ -48,14 +48,20 @@ export async function POST(request: Request) {
         
         TASK:
         - Modify the document based on the prompt. 
+        - **NEW CAPABILITY: Multi-Page Creation**:
+          - If the user asks to create one or more NEW pages (e.g., "Crée une page de garde", "Génère un plan en 3 pages"), you MUST wrap the content of each new page in a \`<page title="Le Titre de la Page">...</page>\` tag.
+          - Inside each \`<page>\` tag, use **rich HTML formatting**. 
+          - **MANDATORY**: Use headings (h1 for page title, h2, h3), lists (ul, li), bold (strong), and paragraphs (p).
+          - Make the content look professional and well-structured.
+          - You can return multiple \`<page>\` blocks in a single response.
         - If "USER SELECTION" contains sections marked with "--- Section: [Title] ---":
           1. Rewrite ONLY the content of those specific sections.
-          2. **CRITICAL**: DO NOT return the rest of the document.
-          3. **CRITICAL**: START and END your response ONLY with the rewritten section content.
-          4. Include the section header (e.g., <h2>Title</h2>) in the returned HTML so it replaces the existing one correctly.
+          2. **CRITICAL**: For EACH section you rewrite, wrap it in a div with a data-section attribute matching the EXACT title (e.g., <div data-section="Introduction">...</div>).
+          3. **CRITICAL**: DO NOT return the rest of the document.
+          4. **CRITICAL**: Include the section header (e.g., <h2>Introduction</h2>) INSIDE the wrapper div.
         - If "USER SELECTION" is a simple text selection:
           1. RETURN ONLY the rewritten version of the selection as HTML.
-        - If "USER SELECTION" is empty:
+        - If "USER SELECTION" is empty and no new pages are requested:
           1. Apply changes to the whole document.
           2. Return the FULL updated document content as HTML.
         
@@ -66,7 +72,7 @@ export async function POST(request: Request) {
         ${selection || "No specific selection."}
         `;
 
-        // 4. Call Gemini (Model: gemini-1.5-flash)
+        // 4. Call Gemini (Model: gemini-2.5-flash)
         // Note: Using 'contents' array structure for compatibility with latest SDK
         console.log("⏳ [Gemini API] Calling generateContent...");
         

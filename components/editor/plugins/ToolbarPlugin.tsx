@@ -1,6 +1,7 @@
 "use client"
 
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext"
+import { useActiveEditor } from "../ActiveEditorContext"
 import { $getSelection, $isRangeSelection, FORMAT_TEXT_COMMAND, FORMAT_ELEMENT_COMMAND, UNDO_COMMAND, REDO_COMMAND, $insertNodes, $getRoot, $createParagraphNode, $isElementNode, $createTextNode } from "lexical"
 import { $patchStyleText } from "@lexical/selection"
 import {
@@ -66,6 +67,7 @@ import SpeechRecognition, { useSpeechRecognition } from 'react-speech-recognitio
 import { $generateNodesFromDOM } from "@lexical/html"
 import { AIValidationFloatingMenu } from "./AIValidationFloatingMenu"
 import { $createSuggestionNode, $isSuggestionNode, REJECT_SUGGESTION_COMMAND } from "@/components/editor/nodes/SuggestionNode"
+import { toast } from "react-toastify"
 
 const TEXT_COLORS = [
     { name: "Noir", value: "#000000" },
@@ -100,8 +102,14 @@ const FONT_SIZES = [
     { label: "Énorme", value: "24px" },
 ]
 
-export function ToolbarPlugin() {
-    const [editor] = useLexicalComposerContext()
+interface ToolbarPluginProps {
+    projectId: Id<"projects">
+}
+
+export function ToolbarPlugin({ projectId }: ToolbarPluginProps) {
+    const { activeEditor: editor } = useActiveEditor()
+    const addPage = useMutation(api.projects.addPage)
+    const updatePageContent = useMutation(api.projects.updatePageContent)
     const [isBold, setIsBold] = useState(false)
     const [isItalic, setIsItalic] = useState(false)
     const [isUnderline, setIsUnderline] = useState(false)
@@ -199,6 +207,7 @@ export function ToolbarPlugin() {
     }, [editor]);
 
     const handleAIAction = async (btn?: HTMLButtonElement) => {
+        if (!editor) return;
         if (!aiPrompt && selectedTargets.length === 0) return;
 
         let currentContent = "";
@@ -254,13 +263,111 @@ export function ToolbarPlugin() {
             // Clean markdown code blocks if present
             content = content.replace(/```(?:html|markdown)?\n?([\s\S]*?)```/g, '$1').trim();
 
-            editor.update(() => {
-                console.log("AI Generation Content received, length:", content.length);
-                const parser = new DOMParser();
-                const dom = parser.parseFromString(content, "text/html");
-                const nodes = $generateNodesFromDOM(editor, dom);
-                console.log("Generated nodes count:", nodes.length);
+            // 1. Initial Parsing (Standard DOM, no Lexical context needed)
+            const parser = new DOMParser();
+            const dom = parser.parseFromString(content, "text/html");
 
+            // 2. Handle NEW PAGES if any (Async mutations)
+            const pageTags = Array.from(dom.querySelectorAll('page'));
+            console.log("Found page tags:", pageTags.length);
+
+            for (const pageTag of pageTags) {
+                const title = pageTag.getAttribute('title') || "Nouvelle Page";
+                const pageHtml = pageTag.innerHTML;
+
+                console.log(`[AI] Creating new page: "${title}" with HTML length: ${pageHtml.length}`);
+                const newPageId = await addPage({ projectId, title });
+
+                if (newPageId) {
+                    toast.success(`Page "${title}" créée.`);
+
+                    // We need a Lexical context to generate nodes and export JSON
+                    // We MUST use editor.update() to create nodes ($ functions)
+                    // We need a Lexical context to generate nodes and export JSON
+                    // We use a Promise to wait for the update to complete and return the JSON
+                    const rootNodeJson = await new Promise<string>((resolve) => {
+                        editor.update(() => {
+                            try {
+                                const pageDom = parser.parseFromString(pageHtml, "text/html");
+                                const pageNodes = $generateNodesFromDOM(editor, pageDom);
+                                console.log(`[AI] Generated ${pageNodes.length} nodes for page "${title}"`);
+
+                                const rootNode = {
+                                    root: {
+                                        children: pageNodes.reduce((acc: any[], node) => {
+                                            try {
+                                                // Lexical Root children MUST be ElementNodes (Block-level).
+                                                // If we have a TextNode or LineBreakNode at top level, we must wrap it in a Paragraph.
+                                                if (node.getType() === 'text' || node.getType() === 'linebreak') {
+                                                    // Check if previous node was a paragraph we can append to? 
+                                                    // For now, simpler: wrap distinct text blocks in new paragraphs
+                                                    // But better: if it's whitespace, ignore?
+                                                    if (node.getTextContent().trim().length === 0) return acc;
+
+                                                    // Wrap in paragraph
+                                                    acc.push({
+                                                        type: "paragraph",
+                                                        version: 1,
+                                                        children: [{
+                                                            detail: 0,
+                                                            format: 0,
+                                                            mode: "normal",
+                                                            style: "",
+                                                            text: node.getTextContent(),
+                                                            type: "text",
+                                                            version: 1
+                                                        }],
+                                                        direction: "ltr",
+                                                        format: "",
+                                                        indent: 0
+                                                    });
+                                                } else {
+                                                    // It's likely an ElementNode (heading, list, paragraph, quote)
+                                                    const json = node.exportJSON();
+                                                    acc.push(json);
+                                                }
+                                            } catch (e) {
+                                                console.error("[AI] Export JSON failed for node:", node.getType(), e);
+                                                // Fallback paragraph
+                                                acc.push({
+                                                    children: [{ detail: 0, format: 0, mode: "normal", style: "", text: node.getTextContent(), type: "text", version: 1 }],
+                                                    direction: "ltr", format: "", indent: 0, type: "paragraph", version: 1
+                                                });
+                                            }
+                                            return acc;
+                                        }, []),
+                                        direction: "ltr", format: "", indent: 0, type: "root", version: 1
+                                    }
+                                };
+                                const jsonString = JSON.stringify(rootNode);
+                                console.log(`[AI] Serialized JSON length: ${jsonString.length}`);
+                                resolve(jsonString);
+                            } catch (e) {
+                                console.error("Error generating page content", e);
+                                resolve(JSON.stringify({ root: { children: [], direction: "ltr", format: "", indent: 0, type: "root", version: 1 } }));
+                            }
+                        });
+                    });
+
+                    await updatePageContent({
+                        projectId,
+                        pageId: newPageId,
+                        content: rootNodeJson
+                    });
+                }
+                // Remove the tag so it doesn't get inserted into the current editor
+                pageTag.remove();
+            }
+
+            // 3. Handle remaining content for the CURRENT page (Standard Sync Update)
+            editor.update(() => {
+                const nodes = $generateNodesFromDOM(editor, dom);
+                if (nodes.length === 0) {
+                    console.log("No nodes left for current page after <page> removal.");
+                    return;
+                }
+
+                console.log("Generated nodes count for current page:", nodes.length);
                 const selection = $getSelection();
                 const groupId = Math.random().toString(36).substring(7);
 
@@ -269,8 +376,8 @@ export function ToolbarPlugin() {
                     const actualNodesToDelete: any[] = [];
                     const root = $getRoot();
                     selectedTargets.forEach(target => {
-                        const nodes = getSectionNodes(target, root);
-                        actualNodesToDelete.push(...nodes);
+                        const targetNodes = getSectionNodes(target, root);
+                        actualNodesToDelete.push(...targetNodes);
                     });
 
                     console.log("Nodes found to replace:", actualNodesToDelete.length);
@@ -292,7 +399,6 @@ export function ToolbarPlugin() {
                         first.replace(suggestionNode);
                         actualNodesToDelete.slice(1).forEach(n => n.remove());
                     } else {
-                        console.warn("No nodes found for targets, appending to root.");
                         $getRoot().append(suggestionNode);
                     }
                 } else {
@@ -301,11 +407,8 @@ export function ToolbarPlugin() {
                     suggestionNode.append(...nodes);
 
                     if ($isRangeSelection(selection)) {
-                        console.log("Applying to range selection");
                         $insertNodes([suggestionNode]);
                     } else {
-                        console.log("No range selection, appending to root or last selection point");
-                        // Fallback: append to end of document if no selection
                         const root = $getRoot();
                         const lastChild = root.getLastChild();
                         if (lastChild) {
@@ -460,6 +563,7 @@ export function ToolbarPlugin() {
     }, [])
 
     useEffect(() => {
+        if (!editor) return;
         return editor.registerUpdateListener(({ editorState }) => {
             editorState.read(() => {
                 updateToolbar()
@@ -468,6 +572,7 @@ export function ToolbarPlugin() {
     }, [editor, updateToolbar])
 
     const insertBanner = (type: BannerType) => {
+        if (!editor) return;
         editor.update(() => {
             const selection = $getSelection()
             if ($isRangeSelection(selection)) {
@@ -476,14 +581,16 @@ export function ToolbarPlugin() {
         })
     }
 
+    // if (!editor) return null; // Don't hide the toolbar
+
     return (
         <div className="flex flex-wrap items-center gap-1 p-2 border-b border-border/50 bg-muted/20 rounded-t-lg sticky top-0 z-10 backdrop-blur shrink-0 min-h-[50px]">
             {/* History Controls */}
             <div className="flex items-center gap-0.5">
-                <Button variant="ghost" size="sm" className="h-7 w-7 p-0 cursor-pointer" onClick={() => editor.dispatchCommand(UNDO_COMMAND, undefined)} title="Annuler">
+                <Button disabled={!editor} variant="ghost" size="sm" className="h-7 w-7 p-0 cursor-pointer" onClick={() => editor?.dispatchCommand(UNDO_COMMAND, undefined)} title="Annuler">
                     <Undo className="h-3.5 w-3.5" />
                 </Button>
-                <Button variant="ghost" size="sm" className="h-7 w-7 p-0 cursor-pointer" onClick={() => editor.dispatchCommand(REDO_COMMAND, undefined)} title="Rétablir">
+                <Button disabled={!editor} variant="ghost" size="sm" className="h-7 w-7 p-0 cursor-pointer" onClick={() => editor?.dispatchCommand(REDO_COMMAND, undefined)} title="Rétablir">
                     <Redo className="h-3.5 w-3.5" />
                 </Button>
             </div>
@@ -492,22 +599,22 @@ export function ToolbarPlugin() {
 
             {/* Basic Formatting */}
             <div className="flex items-center gap-0.5">
-                <Toggle size="sm" pressed={isBold} onPressedChange={() => editor.dispatchCommand(FORMAT_TEXT_COMMAND, "bold")} className="h-7 w-7 p-0 cursor-pointer" aria-label="Gras">
+                <Toggle disabled={!editor} size="sm" pressed={isBold} onPressedChange={() => editor?.dispatchCommand(FORMAT_TEXT_COMMAND, "bold")} className="h-7 w-7 p-0 cursor-pointer" aria-label="Gras">
                     <Bold className="h-3.5 w-3.5" />
                 </Toggle>
-                <Toggle size="sm" pressed={isItalic} onPressedChange={() => editor.dispatchCommand(FORMAT_TEXT_COMMAND, "italic")} className="h-7 w-7 p-0 cursor-pointer" aria-label="Italique">
+                <Toggle disabled={!editor} size="sm" pressed={isItalic} onPressedChange={() => editor?.dispatchCommand(FORMAT_TEXT_COMMAND, "italic")} className="h-7 w-7 p-0 cursor-pointer" aria-label="Italique">
                     <Italic className="h-3.5 w-3.5" />
                 </Toggle>
-                <Toggle size="sm" pressed={isUnderline} onPressedChange={() => editor.dispatchCommand(FORMAT_TEXT_COMMAND, "underline")} className="h-7 w-7 p-0 cursor-pointer" aria-label="Souligné">
+                <Toggle disabled={!editor} size="sm" pressed={isUnderline} onPressedChange={() => editor?.dispatchCommand(FORMAT_TEXT_COMMAND, "underline")} className="h-7 w-7 p-0 cursor-pointer" aria-label="Souligné">
                     <Underline className="h-3.5 w-3.5" />
                 </Toggle>
 
                 {/* Advanced Formatting Group (Hidden on tiny screens) */}
                 <div className="hidden sm:flex items-center gap-0.5">
-                    <Toggle size="sm" pressed={isStrikethrough} onPressedChange={() => editor.dispatchCommand(FORMAT_TEXT_COMMAND, "strikethrough")} className="h-7 w-7 p-0 cursor-pointer" aria-label="Barré">
+                    <Toggle disabled={!editor} size="sm" pressed={isStrikethrough} onPressedChange={() => editor?.dispatchCommand(FORMAT_TEXT_COMMAND, "strikethrough")} className="h-7 w-7 p-0 cursor-pointer" aria-label="Barré">
                         <Strikethrough className="h-3.5 w-3.5" />
                     </Toggle>
-                    <Toggle size="sm" pressed={isCode} onPressedChange={() => editor.dispatchCommand(FORMAT_TEXT_COMMAND, "code")} className="h-7 w-7 p-0 cursor-pointer" aria-label="Code">
+                    <Toggle disabled={!editor} size="sm" pressed={isCode} onPressedChange={() => editor?.dispatchCommand(FORMAT_TEXT_COMMAND, "code")} className="h-7 w-7 p-0 cursor-pointer" aria-label="Code">
                         <Code className="h-3.5 w-3.5" />
                     </Toggle>
                 </div>
@@ -519,32 +626,32 @@ export function ToolbarPlugin() {
             <div className="flex items-center gap-0.5">
                 <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="sm" className="h-7 px-2 gap-1 cursor-pointer" title="Titres">
+                        <Button disabled={!editor} variant="ghost" size="sm" className="h-7 px-2 gap-1 cursor-pointer" title="Titres">
                             <Type className="h-3.5 w-3.5" />
                             <span className="text-xs hidden sm:inline">Normal</span>
                         </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent>
-                        <DropdownMenuItem onClick={() => editor.update(() => {
+                        <DropdownMenuItem onClick={() => editor?.update(() => {
                             const selection = $getSelection()
                             if ($isRangeSelection(selection)) $setBlocksType(selection, () => $createHeadingNode('h1'))
                         })}>
                             <Heading1 className="mr-2 h-4 w-4" /> Titre 1
                         </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => editor.update(() => {
+                        <DropdownMenuItem onClick={() => editor?.update(() => {
                             const selection = $getSelection()
                             if ($isRangeSelection(selection)) $setBlocksType(selection, () => $createHeadingNode('h2'))
                         })}>
                             <Heading2 className="mr-2 h-4 w-4" /> Titre 2
                         </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => editor.update(() => {
+                        <DropdownMenuItem onClick={() => editor?.update(() => {
                             const selection = $getSelection()
                             if ($isRangeSelection(selection)) $setBlocksType(selection, () => $createHeadingNode('h3'))
                         })}>
                             <Heading3 className="mr-2 h-4 w-4" /> Titre 3
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
-                        <DropdownMenuItem onClick={() => editor.update(() => {
+                        <DropdownMenuItem onClick={() => editor?.update(() => {
                             const selection = $getSelection()
                             if ($isRangeSelection(selection)) $setBlocksType(selection, () => $createQuoteNode())
                         })}>
@@ -554,10 +661,10 @@ export function ToolbarPlugin() {
                 </DropdownMenu>
 
                 <div className="hidden sm:flex items-center gap-0.5">
-                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => editor.dispatchCommand(INSERT_UNORDERED_LIST_COMMAND, undefined)}>
+                    <Button disabled={!editor} variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => editor?.dispatchCommand(INSERT_UNORDERED_LIST_COMMAND, undefined)}>
                         <List className="h-3.5 w-3.5" />
                     </Button>
-                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => editor.dispatchCommand(INSERT_ORDERED_LIST_COMMAND, undefined)}>
+                    <Button disabled={!editor} variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => editor?.dispatchCommand(INSERT_ORDERED_LIST_COMMAND, undefined)}>
                         <ListOrdered className="h-3.5 w-3.5" />
                     </Button>
                 </div>
@@ -570,7 +677,7 @@ export function ToolbarPlugin() {
                 {/* Banners */}
                 <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="sm" className="h-7 w-7 p-0" title="Insérer une bannière">
+                        <Button disabled={!editor} variant="ghost" size="sm" className="h-7 w-7 p-0" title="Insérer une bannière">
                             <AlertCircle className="h-3.5 w-3.5" />
                         </Button>
                     </DropdownMenuTrigger>
@@ -594,7 +701,7 @@ export function ToolbarPlugin() {
                 {/* Table with Grid Selection */}
                 <Popover>
                     <PopoverTrigger asChild>
-                        <Button variant="ghost" size="sm" className="h-7 w-7 p-0" title="Insérer un tableau">
+                        <Button disabled={!editor} variant="ghost" size="sm" className="h-7 w-7 p-0" title="Insérer un tableau">
                             <TableIcon className="h-3.5 w-3.5" />
                         </Button>
                     </PopoverTrigger>
@@ -632,7 +739,7 @@ export function ToolbarPlugin() {
                                     onClick={() => {
                                         const rows = (document.getElementById('rows') as HTMLInputElement).value;
                                         const cols = (document.getElementById('cols') as HTMLInputElement).value;
-                                        editor.dispatchCommand(INSERT_TABLE_COMMAND, {
+                                        editor?.dispatchCommand(INSERT_TABLE_COMMAND, {
                                             rows: rows || "3",
                                             columns: cols || "3"
                                         });
@@ -707,8 +814,8 @@ export function ToolbarPlugin() {
             {/* AI Generation */}
             <Dialog onOpenChange={(open) => {
                 if (open) {
-                    editor.getEditorState().read(() => {
-                        const json = JSON.stringify(editor.getEditorState().toJSON());
+                    editor?.getEditorState().read(() => {
+                        const json = JSON.stringify(editor?.getEditorState().toJSON());
                         setAiSections(getPageSections(json));
                     });
                     setAiPrompt("");
@@ -717,7 +824,7 @@ export function ToolbarPlugin() {
                 }
             }}>
                 <DialogTrigger asChild>
-                    <Button variant="ghost" size="sm" className="h-7 px-2 gap-1 text-purple-600 bg-purple-50 hover:bg-purple-100 hover:text-purple-700 cursor-pointer" title="Générer avec l'IA">
+                    <Button disabled={!editor} variant="ghost" size="sm" className="h-7 px-2 gap-1 text-purple-600 bg-purple-50 hover:bg-purple-100 hover:text-purple-700 cursor-pointer" title="Générer avec l'IA">
                         <Sparkles className="h-3.5 w-3.5" />
                         <span className="text-xs font-medium hidden sm:inline">IA</span>
                     </Button>

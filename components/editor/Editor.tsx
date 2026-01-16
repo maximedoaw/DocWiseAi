@@ -1,4 +1,6 @@
 "use client"
+import { PanelRightClose, PanelRightOpen } from "lucide-react"
+import { Button } from "@/components/ui/button"
 
 import { LexicalComposer } from "@lexical/react/LexicalComposer"
 import { RichTextPlugin } from "@lexical/react/LexicalRichTextPlugin"
@@ -18,7 +20,7 @@ import { MarkdownShortcutPlugin } from "@lexical/react/LexicalMarkdownShortcutPl
 import { TRANSFORMERS } from "@lexical/markdown"
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext"
 import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary"
-import { $getRoot, $insertNodes, EditorState, $createParagraphNode, $createTextNode, $getNodeByKey } from "lexical"
+import { $getRoot, $insertNodes, EditorState, $createParagraphNode, $createTextNode, $getNodeByKey, $parseSerializedNode } from "lexical"
 
 // ... imports
 import { useEffect, useRef, useState, forwardRef, useImperativeHandle } from "react"
@@ -225,135 +227,293 @@ function InitialContentPlugin({ initialContent, pageId }: { initialContent?: str
     return null
 }
 
-// Internal Plugin to handle Sidebar logic with access to Editor Context
-function SidebarPlugin({ projectId, pages, activePageId, onPageSelect }: {
-    projectId: Id<"projects">,
-    pages: any[],
-    activePageId: string,
-    onPageSelect: (id: string) => void
-}) {
+import { ActiveEditorProvider, useActiveEditor } from "./ActiveEditorContext"
+import { FOCUS_COMMAND } from "lexical"
+
+// Plugin to register the editor with the context when focused
+function EditorRegistrationPlugin({ pageId }: { pageId: string }) {
     const [editor] = useLexicalComposerContext();
+    const { setActiveEditor } = useActiveEditor();
+
+    useEffect(() => {
+        return editor.registerUpdateListener(({ editorState }) => {
+            // Optional: Auto-set active on update? 
+            // Better to rely on Focus (see OnFocusPlugin below)
+        });
+    }, [editor]);
 
     return (
-        <DocumentStructureSidebar
-            projectId={projectId}
-            pages={pages}
-            activePageId={activePageId}
-            onPageSelect={onPageSelect}
-            onSectionClick={(val) => {
-                const { key, text, type } = JSON.parse(val);
-                editor.update(() => {
-                    let node = $getNodeByKey(key);
-
-                    // Fallback: Search by content if key failed
-                    if (!node) {
-                        const root = $getRoot();
-                        const children = root.getChildren();
-                        // Simple DFS or just root children (Headings are usually top level or nested in sections)
-                        // Traverse all nodes to find match
-                        // Use editor.getEditorState().read ... actually we are in update
-
-                        // Helper to find node
-                        const findMatch = (nodes: any[]): any => {
-                            for (const n of nodes) {
-                                if ((n.getType() === 'heading' || n.getType() === 'banner') && n.getTextContent() === text) {
-                                    return n;
-                                }
-                                // Check children if element
-                                if (n.getChildren) { // @ts-ignore
-                                    const match = findMatch(n.getChildren());
-                                    if (match) return match;
-                                }
-                            }
-                            return null;
-                        }
-                        node = findMatch(children);
-                    }
-
-                    if (node) {
-                        const element = editor.getElementByKey(node.getKey());
-                        if (element) {
-                            element.scrollIntoView({ behavior: "smooth", block: "center" });
-                            // Select the node to give visual feedback
-                            // @ts-ignore
-                            if (node.selectStart) node.selectStart();
-                        }
-                    }
-                });
-            }}
-        />
+        <div className="absolute inset-0 z-0 pointer-events-none" />
     );
 }
 
-export const Editor = forwardRef<any, EditorProps>(({ projectId, pageId, initialContent, pages, onPageSelect }, ref) => {
+// Plugin to set active editor on focus
+function OnFocusPlugin() {
+    const [editor] = useLexicalComposerContext();
+    const { setActiveEditor } = useActiveEditor();
+
+    useEffect(() => {
+        const unregister = editor.registerCommand(
+            FOCUS_COMMAND, // Fake command, actually we use DOM focus
+            () => false,
+            1
+        );
+
+        const rootElement = editor.getRootElement();
+        if (rootElement) {
+            const handleFocus = () => {
+                console.log("Editor Focused:", editor);
+                setActiveEditor(editor);
+            };
+            const handleClick = () => {
+                setActiveEditor(editor);
+            };
+
+            rootElement.addEventListener("focus", handleFocus);
+            rootElement.addEventListener("click", handleClick);
+
+            return () => {
+                rootElement.removeEventListener("focus", handleFocus);
+                rootElement.removeEventListener("click", handleClick);
+            };
+        }
+    }, [editor, setActiveEditor]);
+
+    return null;
+}
+
+
+// Internal Page Editor Component
+import { PaginationPlugin } from "./plugins/PaginationPlugin"
+
+const PageEditor = ({ page, projectId, onOverflow }: { page: any, projectId: Id<"projects">, onOverflow: (json: string) => void }) => {
+    const { registerEditor, unregisterEditor } = useActiveEditor();
+
     const initialConfig = {
-        namespace: `DocWiseEditor-${pageId}`,
+        namespace: `DocWiseEditor-${page.id}`,
         theme,
-        onError: (error: Error) => {
-            console.error(error)
-        },
+        onError: (error: Error) => console.error(error),
         nodes: [
-            HeadingNode,
-            ListNode,
-            ListItemNode,
-            QuoteNode,
-            CodeNode,
-            CodeHighlightNode,
-            TableNode,
-            TableCellNode,
-            TableRowNode,
-            AutoLinkNode,
-            LinkNode,
-            PageBreakNode,
-            BannerNode,
-            SimpleImageNode,
-            SuggestionNode
+            HeadingNode, ListNode, ListItemNode, QuoteNode, CodeNode, CodeHighlightNode,
+            TableNode, TableCellNode, TableRowNode, AutoLinkNode, LinkNode,
+            PageBreakNode, BannerNode, SimpleImageNode, SuggestionNode
         ]
     }
 
     return (
-        <LexicalComposer initialConfig={initialConfig}>
-            <div className="flex flex-1 w-full h-full gap-4">
-                <div className="relative flex-1 flex flex-col min-w-0 bg-background rounded-lg border border-border/50 shadow-sm overflow-hidden">
-                    <ToolbarPlugin />
-                    <div className="relative flex-1 bg-muted/10 overflow-auto">
-                        <RichTextPlugin
-                            contentEditable={
-                                <ContentEditable className="min-h-[29.7cm] w-full max-w-[21cm] mx-auto bg-background shadow-md my-4 sm:my-8 p-4 sm:p-8 md:p-[2.5cm] outline-none prose prose-stone dark:prose-invert max-w-full" />
-                            }
-                            placeholder={
-                                <div className="absolute top-[2cm] sm:top-[3.5cm] left-0 right-0 text-center text-muted-foreground pointer-events-none px-4">
-                                    Commencez à rédiger votre rapport...
-                                </div>
-                            }
-                            ErrorBoundary={LexicalErrorBoundary}
-                        />
+        <div className="mb-8 relative group w-full max-w-[21cm] mx-auto px-4 sm:px-0" id={`page-${page.id}`}>
+            <LexicalComposer initialConfig={initialConfig}>
+                <RegisterEditorPlugin id={page.id} />
+
+                <div
+                    className="relative bg-background shadow-md h-[29.7cm] w-full p-8 sm:p-[2.5cm] outline-none transition-shadow hover:shadow-lg ring-1 ring-black/5 overflow-hidden"
+                    style={{ maxHeight: '29.7cm', height: '29.7cm' }}
+                    data-page-container="true"
+                    onClick={(e) => {
+                        // Ensure we focus the editor when clicking the "paper" area
+                    }}
+                >
+                    {/* Page Number Indicator */}
+                    <div className="absolute top-4 right-4 text-xs text-muted-foreground opacity-50 select-none pointer-events-none">
+                        {page.title}
                     </div>
+
+                    <RichTextPlugin
+                        contentEditable={<ContentEditable className="outline-none w-full  prose prose-stone dark:prose-invert max-w-full" />}
+                        placeholder={
+                            <div className="absolute top-[2.5cm] left-[2.5cm] text-muted-foreground pointer-events-none">
+                                Commencez à rédiger...
+                            </div>
+                        }
+                        ErrorBoundary={LexicalErrorBoundary}
+                    />
                     <HistoryPlugin />
-                    <AutoFocusPlugin />
                     <ListPlugin />
                     <LinkPlugin />
                     <TablePlugin />
                     <ContextMenuPlugin />
                     <MarkdownShortcutPlugin transformers={TRANSFORMERS} />
-                    <FloatingTextFormatMenu />
                     <SuggestionPlugin />
-                    <InitialContentPlugin initialContent={initialContent} pageId={pageId} />
-                    <AutoSavePlugin projectId={projectId} pageId={pageId} />
-                    <EditorRefPlugin projectId={projectId} pageId={pageId} ref={ref} />
+                    <InitialContentPlugin initialContent={page.content} pageId={page.id} />
+                    <AutoSavePlugin projectId={projectId} pageId={page.id} />
+                    {/* <EditorRegistrationPlugin pageId={page.id} /> Replaced by RegisterEditorPlugin */}
+                    <OnFocusPlugin />
+                    <PaginationPlugin pageId={page.id} onOverflow={onOverflow} />
                 </div>
+            </LexicalComposer>
+        </div>
+    )
+}
 
-                {/* Right Sidebar for Structure */}
-                <div className="hidden xl:block h-full">
-                    <SidebarPlugin
+function RegisterEditorPlugin({ id }: { id: string }) {
+    const [editor] = useLexicalComposerContext();
+    const { registerEditor, unregisterEditor } = useActiveEditor();
+
+    useEffect(() => {
+        registerEditor(id, editor);
+        return () => unregisterEditor(id);
+    }, [id, editor, registerEditor, unregisterEditor]);
+
+    return null;
+}
+
+export const Editor = forwardRef<any, EditorProps>(({ projectId, pageId, initialContent, pages, onPageSelect }, ref) => {
+    // Wait, Editor renders ActiveEditorProvider, so we can't use the hook here directly.
+    // We need to move the inner content to a component or just pass the registry refs if possible, 
+    // OR, better: We make a "PageManager" inside ActiveEditorProvider. 
+    // But refactoring that far is risky.
+    // Hack: We can use a REF passed to the provider or just accept that Editor is the provider parent?
+    // Actually, ActiveEditorProvider is INSIDE Editor's return. So Editor cannot use useActiveEditor.
+
+    // Quick Fix: Move the list rendering into a separate component "EditorPageList" which IS inside the provider.
+    return (
+        <ActiveEditorProvider>
+            <div className="flex flex-1 w-full h-full gap-4 relative">
+                <EditorContent
+                    projectId={projectId}
+                    pageId={pageId}
+                    pages={pages}
+                    onPageSelect={onPageSelect}
+                />
+            </div>
+        </ActiveEditorProvider>
+    )
+});
+
+// New Inner Component to consume context
+function EditorContent({ projectId, pageId, pages, onPageSelect }: EditorProps) {
+    const { getEditor } = useActiveEditor();
+    const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+    const addPage = useMutation(api.projects.addPage);
+    const updatePageContent = useMutation(api.projects.updatePageContent);
+
+    // Provide this function to PaginationPlugin
+    // We can't use callbacks that depend on 'pages' if 'pages' changes and re-renders everything too often?
+    // Lexical updates are async.
+
+    const handlePageOverflow = async (sourcePageId: string, contentJSON: string) => {
+        const index = pages.findIndex(p => p.id === sourcePageId);
+        if (index === -1) return;
+
+        // Parse content to ensure valid nodes
+        // contentJSON is the serialized JSON of the *node* that was moved (e.g. ParagraphNode)
+
+        if (index < pages.length - 1) {
+            // Move to next page
+            const nextPage = pages[index + 1];
+            const nextEditor = getEditor(nextPage.id);
+            if (nextEditor) {
+                nextEditor.update(() => {
+                    const root = $getRoot();
+                    const firstChild = root.getFirstChild();
+                    const node = $parseSerializedNode(JSON.parse(contentJSON));
+                    let insertedNode;
+
+                    if (firstChild) {
+                        insertedNode = firstChild.insertBefore(node);
+                    } else {
+                        insertedNode = root.append(node);
+                    }
+
+                    // Restore Selection/Focus to the end of the moved node
+                    // This ensures "typing flow" continues on the next page
+                    if (insertedNode) {
+                        insertedNode.selectEnd();
+                    }
+                });
+            } else {
+                console.warn("Next editor not found in registry", nextPage.id);
+            }
+        } else {
+            // Create New Page
+            const newTitle = `Suite de ${pages[index].title || 'Page ' + (index + 1)}`;
+            const newPageId = await addPage({ projectId, title: newTitle });
+
+            // We need to wait for the page to be created and mounted
+            // But we can just set its content immediately via mutation
+            // We need to construct a valid Root JSON containing this node
+
+            // Quick serialized root construction
+            const rootJSON = {
+                root: {
+                    children: [JSON.parse(contentJSON)],
+                    direction: null,
+                    format: "",
+                    indent: 0,
+                    type: "root",
+                    version: 1
+                }
+            };
+
+            await updatePageContent({ projectId, pageId: newPageId, content: JSON.stringify(rootJSON) });
+            // Ideally we would focus the new page editor here, but it's not mounted yet.
+            // The user will have to click, or we need a more complex "onMount" focus logic.
+            // Select the new page? Maybe not, keep focus on current but let user scroll.
+            // onPageSelect(newPageId); 
+        }
+    };
+
+    // We scroll to the active page on mount or selection change
+    useEffect(() => {
+        if (pageId) {
+            const el = document.getElementById(`page-${pageId}`);
+            if (el) {
+                el.scrollIntoView({ behavior: "smooth", block: "start" });
+            }
+        }
+    }, [pageId]);
+
+    return (
+        <>
+            {/* Sidebar Toggle Button */}
+            <Button
+                variant="ghost"
+                size="icon"
+                className="absolute right-4 top-20 z-50 bg-background/80 backdrop-blur border shadow-sm hover:bg-muted"
+                onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+                title={isSidebarOpen ? "Fermer la barre latérale" : "Ouvrir la barre latérale"}
+            >
+                {isSidebarOpen ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />}
+            </Button>
+
+            <div className="relative flex-1 flex flex-col min-w-0 bg-background/50 rounded-lg border border-border/50 shadow-sm overflow-hidden backdrop-blur-sm">
+                {/* Shared Toolbar controlling active editor */}
+                <ToolbarPlugin projectId={projectId} />
+
+                {/* Scrollable Container for Stacked Pages */}
+                <div className="relative flex-1 overflow-auto bg-muted/10 p-8 flex flex-col items-center">
+                    <div className="w-full max-w-screen-xl mx-auto flex flex-col items-center pb-32">
+                        {pages.map((page) => (
+                            <PageEditor
+                                key={page.id}
+                                page={page}
+                                projectId={projectId}
+                                onOverflow={(json) => handlePageOverflow(page.id, json)}
+                            />
+                        ))}
+
+                        {/* Empty State / Add Page Tip */}
+                        {pages.length === 0 && (
+                            <div className="text-center text-muted-foreground mt-20">
+                                Aucune page. Utilisez l'IA ou le bouton "+" pour en créer.
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
+
+            {/* Right Sidebar for Structure */}
+            {isSidebarOpen && (
+                <div className="hidden xl:block h-full animate-in slide-in-from-right duration-300">
+                    <DocumentStructureSidebar
                         projectId={projectId}
                         pages={pages}
                         activePageId={pageId}
                         onPageSelect={onPageSelect}
                     />
                 </div>
-            </div>
-        </LexicalComposer >
+            )}
+        </>
     )
-})
+}
 Editor.displayName = "Editor"
