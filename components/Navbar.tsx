@@ -6,6 +6,8 @@ import { BookOpen, Menu, X } from "lucide-react"
 import { useState, useEffect } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 
+import { ThemeToggle } from "./ThemeToggle"
+
 export default function Navbar() {
     const [isScrolled, setIsScrolled] = useState(false)
     const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
@@ -21,18 +23,18 @@ export default function Navbar() {
     return (
         <>
             <header
-                className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 border-b ${isScrolled
-                        ? "bg-black/50 backdrop-blur-md border-white/5 py-3"
-                        : "bg-transparent border-transparent py-5"
+                className={`fixed top-0 left-0 right-0 z-50 transition-all duration-500 border-b ${isScrolled
+                    ? "bg-background/80 backdrop-blur-xl border-border/50 py-3"
+                    : "bg-transparent border-transparent py-5"
                     }`}
             >
                 <div className="container mx-auto px-4 flex items-center justify-between">
                     <Link href="/" className="flex items-center gap-2 group">
-                        <div className="bg-primary/10 p-2 rounded-lg group-hover:bg-primary/20 transition-colors">
+                        <div className="bg-primary/10 p-2 rounded-lg group-hover:bg-primary/20 transition-all">
                             <BookOpen className="w-5 h-5 text-primary" />
                         </div>
-                        <span className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-white/70">
-                            DocWise
+                        <span className="text-xl font-bold tracking-tight">
+                            DocWise<span className="text-primary italic">.</span>
                         </span>
                     </Link>
 
@@ -42,22 +44,24 @@ export default function Navbar() {
                             <Link
                                 key={item}
                                 href={`#${item.toLowerCase().replace(/\s+/g, '-')}`}
-                                className="text-sm font-medium text-gray-400 hover:text-white transition-colors"
+                                className="text-sm font-medium text-muted-foreground hover:text-primary transition-colors"
                             >
                                 {item}
                             </Link>
                         ))}
                     </nav>
 
-                    {/* Desktop Auth */}
-                    <div className="hidden md:flex items-center gap-4">
+                    {/* Desktop Auth & Theme */}
+                    <div className="hidden md:flex items-center gap-2">
+                        <ThemeToggle />
+                        <div className="h-4 w-px bg-border/50 mx-2" />
                         <Link href="/sign-in">
-                            <Button variant="ghost" className="text-gray-400 hover:text-white hover:bg-white/5">
+                            <Button variant="ghost" className="text-sm font-medium hover:bg-primary/5">
                                 Connexion
                             </Button>
                         </Link>
                         <Link href="/sign-up">
-                            <Button className="bg-primary hover:bg-primary/90 text-primary-foreground font-medium rounded-full px-6">
+                            <Button className="bg-primary hover:bg-primary/90 text-primary-foreground font-semibold rounded-full px-6 shadow-lg shadow-primary/20">
                                 Commencer
                             </Button>
                         </Link>

@@ -19,14 +19,22 @@ export default function HomePage() {
   // Middleware handles redirection now
 
   return (
-    <div className="min-h-screen bg-gray-900 selection:bg-primary/30 selection:text-primary-foreground">
-      <Navbar />
-      <Hero />
-      <Features />
-      <HowItWorks />
-      <Testimonials />
-      <Pricing />
-      <Footer />
+    <div className="min-h-screen bg-background selection:bg-primary/20 selection:text-primary relative overflow-hidden">
+      {/* Background Decor System */}
+      <div className="fixed inset-0 pointer-events-none z-0 opacity-20 dark:opacity-30">
+        <div className="absolute top-0 right-0 w-[600px] h-[600px] bg-primary/10 blur-[150px] rounded-full" />
+        <div className="absolute bottom-0 left-0 w-[800px] h-[800px] bg-orange-500/10 blur-[200px] rounded-full" />
+      </div>
+
+      <div className="relative z-10">
+        <Navbar />
+        <Hero />
+        <Features />
+        <HowItWorks />
+        <Testimonials />
+        <Pricing />
+        <Footer />
+      </div>
     </div>
   )
 }

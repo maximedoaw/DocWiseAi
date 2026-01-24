@@ -8,9 +8,12 @@ export const create = mutation({
     academicYear: v.optional(v.string()),
     companyName: v.optional(v.string()),
     companyDescription: v.optional(v.string()),
+    domains: v.optional(v.array(v.string())),
+    duration: v.optional(v.string()),
     numPages: v.number(),
     missions: v.array(v.string()),
     pageCount: v.optional(v.number()), // Not in schema but might be useful to store config
+    modelStorageId: v.optional(v.string()), // ID of the uploaded PDF/Docx model
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
@@ -25,7 +28,10 @@ export const create = mutation({
       academicYear: args.academicYear,
       companyName: args.companyName,
       companyDescription: args.companyDescription,
+      domains: args.domains,
+      duration: args.duration,
       missions: args.missions,
+      modelStorageId: args.modelStorageId,
       status: "draft",
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -189,21 +195,37 @@ export const updatePageContent = mutation({
       throw new Error("Unauthorized");
     }
 
-    // Ensure pages array exists
+    // Migration: If the project has no pages in DB, we treat this update as the initialization of the first page.
+    // We use the pageId provided by the client to ensure sync.
     if (!project.pages || project.pages.length === 0) {
-        // Create default page if none exists
-        project.pages = [{
-            id: `page-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+        const newPage = {
+            id: args.pageId,
             title: "Introduction",
-            content: "{}"
-        }];
+            content: args.content
+        };
+        await ctx.db.patch(args.projectId, {
+            pages: [newPage],
+            updatedAt: Date.now(),
+        });
+        return;
     }
     
     const pages = project.pages;
     const pageIndex = pages.findIndex(p => p.id === args.pageId);
     
     if (pageIndex === -1) {
-        throw new Error("Page not found");
+        // As a final fallback for migration, if there's only one page and the ID mismatch, 
+        // we might be in a state where query generated one ID and mutation another.
+        // If project has exactly 1 page and it's practically empty, we allow updating it.
+        if (pages.length === 1 && (pages[0].content === "{}" || !pages[0].content)) {
+             const updatedPages = [{ ...pages[0], id: args.pageId, content: args.content }];
+             await ctx.db.patch(args.projectId, {
+                pages: updatedPages,
+                updatedAt: Date.now(),
+             });
+             return;
+        }
+        throw new Error(`Page not found: ${args.pageId}`);
     }
 
     const newPages = [...pages];
@@ -220,6 +242,7 @@ export const addPage = mutation({
     args: {
         projectId: v.id("projects"),
         title: v.string(),
+        content: v.optional(v.string())
     },
     handler: async (ctx, args) => {
         const identity = await ctx.auth.getUserIdentity();
@@ -228,29 +251,12 @@ export const addPage = mutation({
         const project = await ctx.db.get(args.projectId);
         if (!project || project.userId !== identity.subject) throw new Error("Unauthorized");
 
+        const defaultContent = `<h1>${args.title}</h1><p><br></p>`;
+
         const newPage = {
             id: `page-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
             title: args.title,
-            content: JSON.stringify({
-                root: {
-                    children: [
-                        {
-                            children: [{ detail: 0, format: 0, mode: "normal", style: "", text: args.title, type: "text", version: 1 }],
-                            direction: "ltr",
-                            format: "start",
-                            indent: 0,
-                            type: "heading",
-                            version: 1,
-                            tag: "h1"
-                        }
-                    ],
-                    direction: "ltr",
-                    format: "",
-                    indent: 0,
-                    type: "root",
-                    version: 1
-                }
-            })
+            content: args.content || defaultContent
         };
 
         await ctx.db.patch(args.projectId, {

@@ -4,20 +4,23 @@ import { useQuery } from "convex/react"
 import { api } from "@/convex/_generated/api"
 import { ProjectsSidebar } from "@/components/projects/ProjectsSidebar"
 import { ProjectsMobileNav } from "@/components/projects/ProjectsMobileNav"
-import { Editor } from "@/components/editor/Editor"
 import { Id } from "@/convex/_generated/dataModel"
 import { useParams, useSearchParams, useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
-import { ArrowLeft, Loader, Save, LayoutGrid } from "lucide-react"
+import { ArrowLeft, Loader, Save, LayoutGrid, Sparkles, PanelRightClose, PanelRight } from "lucide-react"
 import Link from "next/link"
-
-import { useState, useRef, useEffect, useCallback } from "react"
-import { toast } from "react-toastify"
+import { FloatingToolbar } from "@/components/editor/FloatingToolbar"
+import { FixedToolbar } from "@/components/editor/FixedToolbar"
+import { ContextMenu } from "@/components/editor/ContextMenu"
 import { DocumentStructureSidebar } from "@/components/editor/plugins/DocumentStructureSidebar"
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
 import { Menu } from "lucide-react"
-
+import { toast } from "sonner"
+import { CustomEditor } from "@/components/editor/CustomEditor"
 import { UserButton } from "@clerk/nextjs"
+import { AIGenerationOverlay } from "@/components/ui/AIGenerationOverlay"
+import { useCallback, useEffect, useRef, useState } from "react"
+import { cn } from "@/lib/utils"
 
 export default function EditorPage() {
     const params = useParams()
@@ -33,10 +36,54 @@ export default function EditorPage() {
     const [mounted, setMounted] = useState(false)
     const [leftSidebarOpen, setLeftSidebarOpen] = useState(false)
     const [rightSidebarOpen, setRightSidebarOpen] = useState(false)
+    const [showRightSidebar, setShowRightSidebar] = useState(true)
+    const [generationStep, setGenerationStep] = useState<"analysing" | "generating" | "formatting" | null>(null)
 
     useEffect(() => {
         setMounted(true)
     }, [])
+
+    // ... (keep useEffect for activePageId)
+
+    // ... (keep useEffect for activePageId)
+
+    // (Note: skipping unchanged lines to reach handleGenerateReport is needed but tool only does contiguous. I will just replace the top state part and the function separately? No, I need to be careful about file structure.)
+
+    // I will replace the state part first.
+
+    // State for pages (local copy for real-time updates)
+    const [localPages, setLocalPages] = useState<any[]>([])
+
+    // Sync local pages with project pages initially
+    useEffect(() => {
+        if (project?.pages && localPages.length === 0) {
+            setLocalPages(project.pages)
+        }
+    }, [project?.pages, localPages.length]) // Only sync once or if length changes significantly? 
+    // Actually we need to be careful. If we are typing, we don't want DB over-writes to revert our typing if DB is slow.
+    // Ideally CustomEditor is the source of truth for 'editing'.
+    // But project.pages might update if pages are added/deleted.
+    // Let's rely on CustomEditor's onPagesChange to keep us up to date.
+
+    // Better strategy: Use a derived state or just use local state initialized from prop.
+    // We'll update localPages when project.pages changes ONLY if we assume no local pending edits, 
+    // OR we just use the handler from CustomEditor.
+
+    useEffect(() => {
+        if (project?.pages) {
+            // We only update if we have a mismatch in length (page added/removed remotely)
+            // or if we are initializing. 
+            // Checking deep equality is expensive.
+            // Let's just trust project.pages for initial load.
+            if (localPages.length === 0) {
+                setLocalPages(project.pages)
+            }
+        }
+    }, [project?.pages])
+
+    // ... (keep useEffect for activePageId)
+
+    // ... (keep useEffect for activePageId)
 
     // Sync active page with URL or default
     useEffect(() => {
@@ -57,16 +104,68 @@ export default function EditorPage() {
         router.push(`/projects/${projectId}?page=${id}`)
     }, [projectId, router])
 
-    const activePage = project?.pages?.find((p: { id: string }) => p.id === activePageId)
+    const activePage = localPages.find((p: { id: string }) => p.id === activePageId) || project?.pages?.find((p: { id: string }) => p.id === activePageId)
 
     const handleManualSave = async () => {
         if (editorRef.current) {
             const promise = editorRef.current.save()
             toast.promise(promise, {
-                pending: "Enregistrement...",
+                loading: "Enregistrement...",
                 success: "Page enregistrée",
-                error: "Erreur lors de l'enregistrement"
+                error: (err) => "Erreur lors de l'enregistrement"
             })
+        }
+    }
+
+    // Handler for AI generation insertion
+    const handleAIInsert = (html: string, prompt: string) => {
+        if (editorRef.current) {
+            editorRef.current.insertAIDraft(html, prompt)
+        }
+    }
+
+    const handleGenerateReport = async () => {
+        if (!project.modelStorageId) return;
+
+        setGenerationStep("analysing");
+
+        try {
+            const timer = setTimeout(() => setGenerationStep("generating"), 2500);
+
+            const res = await fetch("/api/gemini", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    modelStorageId: project.modelStorageId,
+                    projectDetails: {
+                        title: project.title,
+                        companyName: project.companyName,
+                        companyDescription: project.companyDescription,
+                        domains: project.domains,
+                        duration: project.duration,
+                        missions: project.missions,
+                        academicYear: project.academicYear
+                    }
+                })
+            });
+
+            if (!res.ok) throw new Error("Erreur de génération");
+
+            const data = await res.json();
+
+            if (editorRef.current && data.content) {
+                setGenerationStep("formatting");
+                await new Promise(r => setTimeout(r, 1000));
+
+                editorRef.current.insertHTML(data.content);
+                editorRef.current.save();
+                toast.success("Rapport généré avec succès !");
+            }
+        } catch (e) {
+            console.error(e);
+            toast.error("Erreur lors de la génération.");
+        } finally {
+            setGenerationStep(null);
         }
     }
 
@@ -101,7 +200,10 @@ export default function EditorPage() {
             {/* Projects Sidebar (Left) */}
             <ProjectsSidebar />
 
-            <main className="flex-1 flex flex-col h-screen bg-muted/10">
+            <main className="flex-1 flex flex-col h-screen bg-muted/10 relative">
+                {/* AI Overlay */}
+                <AIGenerationOverlay isVisible={!!generationStep} step={generationStep || "analysing"} />
+
                 {/* Editor Header */}
                 <header className="h-14 border-b border-border/50 bg-background/50 backdrop-blur flex items-center justify-between px-2 sm:px-4 sticky top-0 z-50 shrink-0">
                     <div className="flex items-center gap-2 sm:gap-4 flex-1 min-w-0">
@@ -135,7 +237,7 @@ export default function EditorPage() {
                             <SheetContent side="right" className="w-64 p-0">
                                 <DocumentStructureSidebar
                                     projectId={projectId}
-                                    pages={project.pages || []}
+                                    pages={localPages.length > 0 ? localPages : (project.pages || [])}
                                     activePageId={activePageId}
                                     onPageSelect={(id) => {
                                         handlePageSelect(id)
@@ -161,6 +263,17 @@ export default function EditorPage() {
                     </div>
 
                     <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+                        {project.modelStorageId && (
+                            <Button
+                                size="sm"
+                                className="gap-1 sm:gap-2 bg-gradient-to-r from-amber-500 to-orange-600 text-white hover:opacity-90 border-0 h-8 text-xs px-2 sm:px-3 shadow-sm"
+                                onClick={handleGenerateReport}
+                            >
+                                <Sparkles className="w-3 h-3" />
+                                <span className="hidden sm:inline">Générer avec l'IA</span>
+                            </Button>
+                        )}
+
                         <Button
                             size="sm"
                             className="gap-1 sm:gap-2 bg-primary text-primary-foreground hover:bg-primary/90 h-8 text-xs px-2 sm:px-3"
@@ -169,6 +282,21 @@ export default function EditorPage() {
                         >
                             <Save className="w-3 h-3" />
                             <span className="hidden sm:inline">Enregistrer</span>
+                        </Button>
+
+                        {/* Sidebar Toggle Button (Desktop) */}
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            className="hidden xl:flex h-8 w-8 p-0"
+                            onClick={() => setShowRightSidebar(!showRightSidebar)}
+                            title={showRightSidebar ? "Masquer la barre latérale" : "Afficher la barre latérale"}
+                        >
+                            {showRightSidebar ? (
+                                <PanelRightClose className="w-4 h-4" />
+                            ) : (
+                                <PanelRight className="w-4 h-4" />
+                            )}
                         </Button>
 
                         <div className="pl-2 border-l border-border/50">
@@ -184,40 +312,48 @@ export default function EditorPage() {
                     </div>
                 </header>
 
-                {/* Main Content Area */}
-                <div className="flex-1 flex overflow-hidden">
-                    {/* Centered Editor */}
-                    {activePageId && activePage ? (
-                        <div className="flex-1 relative flex flex-col min-w-0">
-                            <div className="flex-1 overflow-hidden p-2 sm:p-4">
-                                <Editor
-                                    key={activePageId} // Critical: Force re-mount on page switch to reset editor state
-                                    projectId={project._id}
-                                    pageId={activePageId}
-                                    initialContent={activePage.content}
-                                    ref={editorRef}
-                                    pages={project.pages || []}
-                                    onPageSelect={handlePageSelect}
+                <div className="flex-1 flex flex-col overflow-hidden relative">
+                    <FixedToolbar
+                        className="shrink-0 z-40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60"
+                        activePageContent={activePage?.content}
+                        onInsertHTML={handleAIInsert}
+                    />
+
+                    <div className="flex-1 flex overflow-hidden relative">
+                        <CustomEditor
+                            key={project._id}
+                            ref={editorRef}
+                            projectId={project._id}
+                            pages={project.pages || []}
+                            onPageSelect={setActivePageId}
+                            onPagesChange={setLocalPages}
+                        />
+
+                        <FloatingToolbar />
+                        <ContextMenu />
+
+                        {/* Right Sidebar */}
+                        <div
+                            className={cn(
+                                "hidden xl:block h-full border-l shrink-0 transition-all duration-300 ease-in-out overflow-hidden",
+                                showRightSidebar ? "w-80 opacity-100" : "w-0 opacity-0"
+                            )}
+                        >
+                            <div className="w-80 h-full">
+                                <DocumentStructureSidebar
+                                    projectId={projectId}
+                                    pages={localPages.length > 0 ? localPages : (project.pages || [])}
+                                    activePageId={activePageId || ""}
+                                    onPageSelect={(id) => {
+                                        if (editorRef.current) {
+                                            editorRef.current.scrollToPage(id)
+                                        }
+                                        setActivePageId(id)
+                                    }}
                                 />
                             </div>
                         </div>
-                    ) : (
-                        <div className="flex-1 flex items-center justify-center text-muted-foreground p-4 text-center">
-                            <div>
-                                <p className="text-sm mb-2">Sélectionnez une page pour commencer</p>
-                                <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => setRightSidebarOpen(true)}
-                                    className="xl:hidden"
-                                >
-                                    Ouvrir le menu
-                                </Button>
-                            </div>
-                        </div>
-                    )}
-
-
+                    </div>
                 </div>
             </main>
         </div>

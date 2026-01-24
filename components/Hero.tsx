@@ -7,144 +7,87 @@ import { Button } from '@/components/ui/button';
 
 export default function Hero() {
   return (
-    <section className="relative overflow-hidden bg-background pt-20 pb-32 lg:pt-32">
-      {/* Warm ambient background */}
-      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full h-[600px] bg-amber-500/10 blur-[120px] rounded-full pointer-events-none" />
+    <section className="relative min-h-screen flex flex-col items-center justify-start overflow-hidden bg-transparent pt-32 pb-20">
+      {/* Background Harmonization */}
+      <div className="absolute bottom-0 inset-x-0 h-40 bg-gradient-to-t from-background to-transparent" />
+
+      {/* Dynamic Mesh Background - Adapts to Theme */}
+      <div className="absolute inset-0 z-0 pointer-events-none overflow-hidden">
+        <div className="absolute top-[-5%] left-1/2 -translate-x-1/2 w-[60%] h-[40%] bg-primary/10 blur-[120px] rounded-full" />
+      </div>
 
       <div className="container relative z-10 px-4 mx-auto">
-        <div className="flex flex-col lg:flex-row items-center gap-12 lg:gap-20">
+        <div className="max-w-5xl mx-auto text-center space-y-12">
 
-          {/* Left Content */}
-          <div className="flex-1 text-center lg:text-left">
+          {/* Headline Section */}
+          <div className="space-y-6">
             <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5 }}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 font-medium text-sm mb-8"
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="inline-flex items-center gap-3 px-4 py-1.5 rounded-full bg-primary/5 border border-primary/10 backdrop-blur-sm mx-auto"
             >
-              <Coffee className="w-4 h-4" />
-              <span>Plus de stress, juste de la réussite</span>
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
+              </span>
+              <span className="text-[10px] font-black uppercase tracking-[0.3em] text-primary">L&apos;IA qui comprend votre parcours</span>
             </motion.div>
 
             <motion.h1
-              initial={{ opacity: 0, y: 20 }}
+              initial={{ opacity: 0, y: 30 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, delay: 0.1 }}
-              className="text-4xl md:text-6xl lg:text-7xl font-bold tracking-tight text-foreground mb-6"
+              transition={{ delay: 0.1, duration: 0.8 }}
+              className="text-5xl md:text-8xl font-black tracking-tighter leading-[0.85] text-foreground"
             >
-              Votre rapport, <br />
-              <span className="text-primary italic">enfin terminé.</span>
+              Votre rapport de stage <br />
+              <span className="text-primary italic">sublimé par l&apos;IA.</span>
             </motion.h1>
 
             <motion.p
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, delay: 0.2 }}
-              className="text-lg md:text-xl text-muted-foreground mb-10 leading-relaxed max-w-2xl mx-auto lg:mx-0"
+              transition={{ delay: 0.2, duration: 0.8 }}
+              className="text-lg md:text-2xl text-muted-foreground leading-relaxed max-w-2xl mx-auto font-medium"
             >
-              DocWise est votre compagnon de rédaction. Il vous aide à structurer vos idées, trouver les bons mots et mettre en forme votre expérience. <span className="text-foreground font-medium">Fini le syndrome de la page blanche.</span>
+              Passez de simples notes en vrac à un document académique d&apos;exception.
+              Fini le stress, DocWise s&apos;occupe de tout.
             </motion.p>
-
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, delay: 0.3 }}
-              className="flex flex-col sm:flex-row items-center justify-center lg:justify-start gap-4"
-            >
-              <Link href="/sign-up">
-                <Button size="lg" className="h-14 px-8 rounded-full text-lg shadow-xl shadow-amber-500/20 hover:shadow-amber-500/30 transition-all hover:scale-105">
-                  Commencer mon rapport
-                </Button>
-              </Link>
-              <Link href="/demo">
-                <Button variant="ghost" size="lg" className="h-14 px-8 rounded-full text-lg hover:bg-amber-500/10 hover:text-amber-600 dark:hover:text-amber-400">
-                  Voir un exemple
-                </Button>
-              </Link>
-            </motion.div>
-
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ duration: 1, delay: 0.8 }}
-              className="mt-12 flex items-center justify-center lg:justify-start gap-6 opacity-60 grayscale hover:grayscale-0 transition-all"
-            >
-              <div className="flex -space-x-3">
-                {[1, 2, 3, 4].map((i) => (
-                  <div key={i} className={`w-10 h-10 rounded-full border-2 border-background bg-zinc-200 dark:bg-zinc-800 flex items-center justify-center text-xs font-bold text-muted-foreground`}>
-                    {String.fromCharCode(64 + i)}
-                  </div>
-                ))}
-              </div>
-              <div className="text-sm">
-                <span className="font-bold text-foreground">1,500+ étudiants</span> nous font confiance
-              </div>
-            </motion.div>
           </div>
 
-          {/* Right Content - Friendly Editor Visual */}
+          {/* CTA Section */}
           <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ duration: 0.8, delay: 0.4 }}
-            className="flex-1 w-full max-w-xl lg:max-w-none relative"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.3 }}
+            className="flex flex-col sm:flex-row items-center justify-center gap-4"
           >
-            {/* Decorative blob */}
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[120%] h-[120%] bg-gradient-to-tr from-amber-200/20 to-orange-100/20 dark:from-amber-900/20 dark:to-orange-900/10 rounded-full blur-3xl animate-pulse" />
+            <Link href="/sign-up">
+              <Button size="lg" className="h-16 px-10 rounded-2xl text-lg font-bold shadow-2xl shadow-primary/20 hover:shadow-primary/40 transition-all hover:scale-[1.03] bg-primary text-primary-foreground">
+                Commencer gratuitement
+              </Button>
+            </Link>
+          </motion.div>
 
-            {/* The Card */}
-            <div className="relative bg-card border border-border/50 shadow-2xl rounded-3xl overflow-hidden backdrop-blur-sm">
-              {/* Header */}
-              <div className="px-6 py-4 border-b border-border/50 flex items-center gap-4 bg-muted/30">
-                <div className="flex gap-1.5">
-                  <div className="w-3 h-3 rounded-full bg-red-400/80" />
-                  <div className="w-3 h-3 rounded-full bg-amber-400/80" />
-                  <div className="w-3 h-3 rounded-full bg-green-400/80" />
-                </div>
-                <div className="h-6 w-32 bg-muted/50 rounded-full mx-auto" />
-              </div>
-
-              {/* Editor Content */}
-              <div className="p-8 space-y-6">
-                <div className="space-y-3">
-                  <div className="h-8 w-3/4 bg-foreground/10 rounded-lg animate-pulse" />
-                  <div className="h-4 w-full bg-foreground/5 rounded-full" />
-                  <div className="h-4 w-5/6 bg-foreground/5 rounded-full" />
-                  <div className="h-4 w-4/6 bg-foreground/5 rounded-full" />
-                </div>
-
-                {/* User Friend "Suggestion" */}
-                <div className="flex gap-4 items-start p-4 rounded-xl bg-amber-500/5 border border-amber-500/10">
-                  <div className="w-8 h-8 rounded-full bg-amber-100 dark:bg-amber-900/50 flex items-center justify-center flex-shrink-0 text-amber-600">
-                    <PenTool className="w-4 h-4" />
-                  </div>
-                  <div className="space-y-1">
-                    <p className="text-sm font-medium text-foreground">Suggestion de formulation</p>
-                    <p className="text-xs text-muted-foreground leading-relaxed">
-                      "Cette expérience m'a permis de..." est excellent. Tu pourrais ajouter un exemple concret ici pour renforcer ton propos.
-                    </p>
-                    <button className="text-xs font-semibold text-primary hover:text-primary/80 mt-2">
-                      Accepter la suggestion
-                    </button>
-                  </div>
-                </div>
+          {/* Image Showcase - Startup Style */}
+          <motion.div
+            initial={{ opacity: 0, y: 50 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 1, delay: 0.5 }}
+            className="pt-12 relative"
+          >
+            {/* The Border & Glow Frame */}
+            <div className="relative mx-auto rounded-[2.5rem] p-2 bg-gradient-to-b from-primary/50 to-transparent shadow-[0_0_50px_-12px_rgba(249,115,22,0.3)]">
+              <div className="relative rounded-[2rem] overflow-hidden border border-border/50 bg-background/50 backdrop-blur-2xl">
+                <img
+                  src="/img1.PNG"
+                  alt="DocWise Interface"
+                  className="w-full h-auto object-cover opacity-95 hover:opacity-100 transition-opacity duration-700"
+                />
               </div>
             </div>
 
-            {/* Floating Achievement */}
-            <motion.div
-              animate={{ y: [0, -10, 0] }}
-              transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
-              className="absolute -right-6 bottom-12 bg-card p-4 rounded-2xl shadow-xl border border-border/50 hidden md:flex items-center gap-3"
-            >
-              <div className="w-10 h-10 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center text-green-600">
-                <GraduationCap className="w-5 h-5" />
-              </div>
-              <div>
-                <div className="text-sm font-bold text-foreground">Validé !</div>
-                <div className="text-xs text-muted-foreground">Prêt à imprimer</div>
-              </div>
-            </motion.div>
+            {/* Subtle decorative flare below image */}
+            <div className="absolute -bottom-20 left-1/2 -translate-x-1/2 w-4/5 h-40 bg-primary/5 blur-[100px] rounded-full pointer-events-none" />
           </motion.div>
         </div>
       </div>

@@ -1,5 +1,5 @@
 import React from 'react'
-import { cookies } from 'next/headers'
+// cookies import removed
 import { redirect } from 'next/navigation'
 import { auth } from '@clerk/nextjs/server'
 import { ConvexHttpClient } from "convex/browser";
@@ -24,16 +24,9 @@ const OnboardingPage = async () => {
     const userStatus = await convex.query(api.users.getUserStatus, {});
 
     // 3. If Onboarded -> Sync Cookie & Redirect
+    // 3. If Onboarded -> To Route Handler (to set cookie)
     if (userStatus?.onboardingCompleted) {
-        const cookieStore = await cookies()
-        cookieStore.set("onboarding_complete", "true", {
-            httpOnly: false,
-            secure: process.env.NODE_ENV === "production",
-            maxAge: 60 * 60 * 24 * 365, // 1 Year
-            path: "/",
-        })
-
-        redirect('/projects')
+        redirect('/api/auth/sync-onboarding')
     }
 
     return (

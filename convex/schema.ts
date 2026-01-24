@@ -17,10 +17,13 @@ export default defineSchema({
     academicYear: v.optional(v.string()),
     companyName: v.optional(v.string()),
     companyDescription: v.optional(v.string()),
+    domains: v.optional(v.array(v.string())), // Added for better context
+    duration: v.optional(v.string()), // Added for context
     numPages: v.optional(v.number()), // Made optional for backward compatibility
     missions: v.array(v.string()),
     status: v.string(), // "draft", "completed"
     content: v.optional(v.string()), // Deprecated but kept for migration
+    modelStorageId: v.optional(v.string()), // ID of the uploaded PDF/Docx model
     pages: v.optional(v.array(v.object({
         id: v.string(), // UUID
         title: v.string(),

@@ -1,6 +1,7 @@
+
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Plus, FileText, Trash2, StickyNote, Hash, ChevronRight } from "lucide-react"
+import { Plus, FileText, Trash2, StickyNote, Hash, ChevronRight, MoreVertical, CheckSquare, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useMutation } from "convex/react"
 import { api } from "@/convex/_generated/api"
@@ -11,8 +12,16 @@ import {
     AccordionItem,
     AccordionTrigger,
 } from "@/components/ui/accordion"
-import { useMemo } from "react"
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuTrigger,
+    DropdownMenuSeparator
+} from "@/components/ui/dropdown-menu"
+import { useMemo, useState, useEffect } from "react"
 import { PageThumbnail } from "./PageThumbnail"
+import { DeletePagesDialog } from "../dialogs/DeletePagesDialog"
 
 interface Page {
     id: string
@@ -34,35 +43,19 @@ export interface Section {
     key?: string
 }
 
-export function getPageSections(contentJSON: string): Section[] {
+export function getPageSections(htmlContent: string): Section[] {
+    if (typeof window === 'undefined') return [] // Guard for SSR
     try {
-        const content = JSON.parse(contentJSON)
-        const sections: Section[] = []
-
-        if (!content.root || !content.root.children) return []
-
-        const traverse = (node: any) => {
-            if (node.type === "heading") {
-                const text = node.children?.[0]?.text || ""
-                if (text) {
-                    // Avoid consecutive duplicates
-                    const last = sections[sections.length - 1];
-                    if (!last || last.text !== text || last.type !== node.tag) {
-                        sections.push({
-                            type: node.tag,
-                            text: text,
-                            key: node.key // Extract Lexical Node Key
-                        })
-                    }
-                }
-            } else if (node.children && Array.isArray(node.children)) {
-                node.children.forEach(traverse)
-            }
-        }
-
-        content.root.children.forEach(traverse)
-        return sections
+        const parser = new DOMParser()
+        const doc = parser.parseFromString(htmlContent, 'text/html')
+        const headings = doc.querySelectorAll('h1, h2, h3')
+        return Array.from(headings).map((h, index) => ({
+            type: h.tagName.toLowerCase() as "h1" | "h2" | "h3",
+            text: h.textContent || "",
+            key: `section-${index}-${h.textContent?.slice(0, 10)}`
+        }))
     } catch (e) {
+        console.error("Error parsing sections", e)
         return []
     }
 }
@@ -89,40 +82,168 @@ export function DocumentStructureSidebar({ projectId, pages, activePageId, onPag
     const addPage = useMutation(api.projects.addPage)
     const deletePage = useMutation(api.projects.deletePage)
 
+    const [selectedPageIds, setSelectedPageIds] = useState<Set<string>>(new Set());
+    const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+
+    // Selection mode is implicit: if checks are visible or if user explicitly triggered it.
+    // Let's make it explicit or derived from selection size?
+    // User asked: "si il selectionne il pourra alors en selectionner d'autres".
+    // Let's say if selection > 0, we show checkboxes everywhere.
+    // OR we have a dedicated state 'isSelectionMode'.
+    const [isSelectionMode, setIsSelectionMode] = useState(false);
+
+    // Auto-scroll to active page
+    // Auto-scroll to active page - DISABLED by user request
+    // useEffect(() => {
+    //     if (activePageId) {
+    //         const el = document.getElementById(`thumbnail-${activePageId}`);
+    //         if (el) {
+    //             el.scrollIntoView({ behavior: "smooth", block: "center" });
+    //         }
+    //     }
+    // }, [activePageId]);
+
+    const toggleSelection = (pageId: string) => {
+        const newSelected = new Set(selectedPageIds);
+        if (newSelected.has(pageId)) {
+            newSelected.delete(pageId);
+        } else {
+            newSelected.add(pageId);
+        }
+        setSelectedPageIds(newSelected);
+    };
+
+    const handleSelectAll = () => {
+        if (selectedPageIds.size === pages.length) {
+            setSelectedPageIds(new Set());
+        } else {
+            setSelectedPageIds(new Set(pages.map(p => p.id)));
+        }
+    };
+
+    const handlePageClick = (pageId: string, e: React.MouseEvent) => {
+        if (e.ctrlKey || e.metaKey) {
+            e.preventDefault();
+            e.stopPropagation();
+            const newSelected = new Set(selectedPageIds);
+            if (newSelected.has(pageId)) {
+                newSelected.delete(pageId);
+            } else {
+                newSelected.add(pageId);
+            }
+            setSelectedPageIds(newSelected);
+        } else {
+            if (selectedPageIds.size > 0) {
+                setSelectedPageIds(new Set());
+            }
+            onPageSelect(pageId);
+
+            // Explicitly scroll the editor to this page
+            const el = document.getElementById(`page-${pageId}`);
+            if (el) {
+                el.scrollIntoView({ behavior: "smooth", block: "start" });
+            }
+        }
+    };
+
+    const enterSelectionMode = (initialPageId?: string) => {
+        setIsSelectionMode(true);
+        if (initialPageId) {
+            setSelectedPageIds(new Set([initialPageId]));
+        }
+    };
+
+    const exitSelectionMode = () => {
+        setIsSelectionMode(false);
+        setSelectedPageIds(new Set());
+    };
+
+    const handleConfirmDelete = async () => {
+        const idsToDelete = Array.from(selectedPageIds);
+        setIsDeleteDialogOpen(false);
+        // Optimistic clear
+        exitSelectionMode();
+
+        await Promise.all(idsToDelete.map(id => deletePage({ projectId, pageId: id })));
+    };
+
+    const handleDeletePage = async (pageId: string) => {
+        // Direct single delete from menu
+        setSelectedPageIds(new Set([pageId]));
+        setIsDeleteDialogOpen(true);
+    };
+
     const handleAddPage = async () => {
         const title = "Nouvelle Page"
         const newPageId = await addPage({ projectId, title })
         if (newPageId) {
             onPageSelect(newPageId)
-        }
-    }
-
-    const handleDeletePage = async (pageId: string, e: React.MouseEvent) => {
-        e.stopPropagation()
-        if (pages.length <= 1) {
-            alert("Vous devez avoir au moins une page.")
-            return
-        }
-        if (confirm("Supprimer cette page ?")) {
-            await deletePage({ projectId, pageId })
-            if (activePageId === pageId) {
-                // Select previous or first page
-                const index = pages.findIndex(p => p.id === pageId)
-                const newIndex = Math.max(0, index - 1)
-                const newActive = pages.find((_, i) => i === newIndex) || pages[0]
-                onPageSelect(newActive.id)
-            }
+            // Scroll editor to end when adding page
+            setTimeout(() => {
+                const el = document.getElementById(`page-${newPageId}`);
+                if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+            }, 500);
         }
     }
 
     return (
         <div className="w-full xl:w-72 border-l border-border/50 bg-muted/10 h-full flex flex-col">
-            <div className="p-4 border-b border-border/50 shrink-0 bg-background/50 backdrop-blur-sm">
-                <h3 className="font-semibold text-sm flex items-center gap-2">
-                    <FileText className="w-4 h-4 text-muted-foreground" />
-                    Pages
-                </h3>
+            <div className="h-14 px-4 border-b border-border/50 shrink-0 bg-background/50 backdrop-blur-sm flex items-center justify-between transition-all duration-200">
+                {!isSelectionMode ? (
+                    <h3 className="font-semibold text-sm flex items-center gap-2 text-foreground/80">
+                        <FileText className="w-4 h-4 text-muted-foreground" />
+                        Pages
+                    </h3>
+                ) : (
+                    <div className="flex items-center justify-between w-full animate-in fade-in slide-in-from-top-1 duration-200">
+                        <div className="flex items-center gap-2">
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={exitSelectionMode}
+                                className="h-8 w-8 -ml-2 text-muted-foreground hover:text-foreground"
+                                title="Annuler la sélection"
+                            >
+                                <X className="w-4 h-4" />
+                            </Button>
+                            <span className="text-sm font-medium">
+                                {selectedPageIds.size}
+                            </span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={handleSelectAll}
+                                className="h-8 text-xs font-medium text-muted-foreground hover:text-foreground"
+                            >
+                                {selectedPageIds.size === pages.length ? "Tout désélectionner" : "Tout sélectionner"}
+                            </Button>
+
+                            {selectedPageIds.size > 0 && (
+                                <div className="h-4 w-px bg-border/50 mx-1" />
+                            )}
+
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                className={cn(
+                                    "h-8 w-8 text-muted-foreground transition-all",
+                                    selectedPageIds.size > 0
+                                        ? "text-destructive hover:bg-destructive/10 hover:text-destructive"
+                                        : "opacity-50 pointer-events-none"
+                                )}
+                                onClick={() => selectedPageIds.size > 0 && setIsDeleteDialogOpen(true)}
+                                title="Supprimer la sélection"
+                            >
+                                <Trash2 className="w-4 h-4" />
+                            </Button>
+                        </div>
+                    </div>
+                )}
             </div>
+
+            {/* Removed the separate Action Bar, integrated above for cleaner UI */}
 
             <ScrollArea className="flex-1 min-h-0">
                 <div className="px-4 py-4 flex flex-col gap-4 items-center">
@@ -131,41 +252,104 @@ export function DocumentStructureSidebar({ projectId, pages, activePageId, onPag
                             Aucune page
                         </div>
                     ) : (
-                        pages.map((page, index) => (
-                            <div key={page.id} className="relative group">
-                                <div className="mb-1 flex items-center justify-between px-1">
-                                    <span className="text-xs font-medium text-muted-foreground">
-                                        Page {index + 1}
-                                    </span>
-                                    <Button
-                                        variant="ghost"
-                                        size="icon"
-                                        className="h-5 w-5 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-destructive/10 hover:text-destructive"
-                                        onClick={(e) => handleDeletePage(page.id, e)}
-                                        title="Supprimer la page"
-                                    >
-                                        <Trash2 className="w-3 h-3" />
-                                    </Button>
+                        pages.map((page, index) => {
+                            const isSelected = selectedPageIds.has(page.id);
+
+                            return (
+                                <div
+                                    key={page.id}
+                                    id={`thumbnail-${page.id}`}
+                                    className="relative group w-full flex flex-col items-center"
+                                >
+                                    <div className="w-full max-w-[140px] mb-1 flex items-center justify-between px-1">
+                                        <span className="text-xs font-medium text-muted-foreground">
+                                            Page {index + 1}
+                                        </span>
+
+                                        {/* Kebab Menu or Checkbox */}
+                                        {isSelectionMode ? (
+                                            <div
+                                                className="cursor-pointer p-1"
+                                                onClick={() => toggleSelection(page.id)}
+                                            >
+                                                <div className={cn(
+                                                    "w-4 h-4 rounded border flex items-center justify-center transition-colors",
+                                                    isSelected ? "bg-primary border-primary" : "border-muted-foreground/50 bg-background"
+                                                )}>
+                                                    {isSelected && <CheckSquare className="w-3 h-3 text-white" />}
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <DropdownMenu>
+                                                <DropdownMenuTrigger asChild>
+                                                    <Button variant="ghost" size="icon" className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                        <MoreVertical className="w-3.5 h-3.5" />
+                                                    </Button>
+                                                </DropdownMenuTrigger>
+                                                <DropdownMenuContent align="end">
+                                                    <DropdownMenuItem onClick={() => enterSelectionMode(page.id)}>
+                                                        <CheckSquare className="w-4 h-4 mr-2" />
+                                                        Sélectionner
+                                                    </DropdownMenuItem>
+                                                    <DropdownMenuSeparator />
+                                                    <DropdownMenuItem
+                                                        className="text-destructive focus:text-destructive"
+                                                        onClick={() => handleDeletePage(page.id)}
+                                                    >
+                                                        <Trash2 className="w-4 h-4 mr-2" />
+                                                        Supprimer
+                                                    </DropdownMenuItem>
+                                                </DropdownMenuContent>
+                                            </DropdownMenu>
+                                        )}
+                                    </div>
+
+                                    <div className="relative">
+                                        <PageThumbnail
+                                            content={page.content}
+                                            title={getPageTitle(page)}
+                                            isActive={activePageId === page.id}
+                                            onClick={() => {
+                                                if (isSelectionMode) {
+                                                    toggleSelection(page.id);
+                                                } else {
+                                                    onPageSelect(page.id);
+                                                }
+                                            }}
+                                        />
+
+                                        {/* Overlay for selection mode visual feedback */}
+                                        {isSelectionMode && (
+                                            <div
+                                                className={cn(
+                                                    "absolute inset-0 rounded-md transition-colors pointer-events-none",
+                                                    isSelected ? "ring-2 ring-primary ring-offset-2 bg-primary/5" : "hover:bg-black/5"
+                                                )}
+                                            />
+                                        )}
+                                    </div>
                                 </div>
-                                <PageThumbnail
-                                    content={page.content}
-                                    title={getPageTitle(page)}
-                                    isActive={activePageId === page.id}
-                                    onClick={() => onPageSelect(page.id)}
-                                />
-                            </div>
-                        ))
+                            );
+                        })
                     )}
                 </div>
             </ScrollArea>
 
-            <div className="p-4 border-t border-border/50 shrink-0 bg-background/50 backdrop-blur-sm">
-                <Button className="w-full gap-2 shadow-sm" size="sm" onClick={handleAddPage}>
-                    <Plus className="w-4 h-4" />
-                    Ajouter une page
-                </Button>
-            </div>
+            {!isSelectionMode && (
+                <div className="p-4 border-t border-border/50 shrink-0 bg-background/50 backdrop-blur-sm">
+                    <Button className="w-full gap-2 shadow-sm" size="sm" onClick={handleAddPage}>
+                        <Plus className="w-4 h-4" />
+                        Ajouter une page
+                    </Button>
+                </div>
+            )}
+
+            <DeletePagesDialog
+                open={isDeleteDialogOpen}
+                onOpenChange={setIsDeleteDialogOpen}
+                onConfirm={handleConfirmDelete}
+                pageCount={selectedPageIds.size}
+            />
         </div>
     )
 }
-

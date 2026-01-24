@@ -1,29 +1,89 @@
 import { GoogleGenAI } from "@google/genai";
 import { NextResponse } from "next/server";
+import { ConvexHttpClient } from "convex/browser";
+import { api } from "@/convex/_generated/api";
 
 export async function POST(request: Request) {
     try {
         const apiKey = process.env.GEMINI_API_KEY;
-        if (!apiKey) {
-            console.error("❌ ERROR: GEMINI_API_KEY is missing in environment variables.");
-            return NextResponse.json({ error: "Server Configuration Error: Missing API Key" }, { status: 500 });
+        const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
+
+        if (!apiKey || !convexUrl) {
+            console.error("❌ ERROR: Missing API Key or Convex URL.");
+            return NextResponse.json({ error: "Server Configuration Error" }, { status: 500 });
         }
 
         // 1. Validate Input
         const body = await request.json();
-        const { prompt, currentContent, selection } = body;
+        const { prompt, currentContent, selection, modelStorageId, projectDetails } = body;
 
-        if (!prompt) {
-            return NextResponse.json({ error: "Missing 'prompt' in request body" }, { status: 400 });
+        // If simple prompt is missing but we have model+details, we construct a prompt
+        let finalPrompt = prompt || "";
+        
+        if (modelStorageId && projectDetails) {
+             finalPrompt = `
+             TASK: Generate a complete internship report based on the ATTACHED TEMPLATE FILE structure and the following PROJECT DETAILS.
+             
+             PROJECT DETAILS:
+             - Role/Title: ${projectDetails.title}
+             - Company: ${projectDetails.companyName}
+             - Description: ${projectDetails.companyDescription}
+             - Domain/Activity: ${projectDetails.domains?.join(", ")}
+             - Duration: ${projectDetails.duration}
+             - Missions: ${projectDetails.missions?.join(", ")}
+             - Academic Year: ${projectDetails.academicYear}
+             
+             INSTRUCTIONS:
+             1. **Analyze the structure** of the attached PDF/Doc file (styles, headers, density).
+             2. **Replicate this structure** exactly (sections, subsections) but with the content adapted to the NEW Project Details.
+             3. **Tone**: Professional, academic, yet engaging.
+             4. **Output**: Return the full report formatted in HTML as described in the system instructions. Use <page> tags for pagination if the model has multiple pages.
+             `;
         }
 
-        console.log("🚀 [Gemini API] Received request:", { promptLength: prompt.length, contextLength: currentContent?.length, selectionLength: selection?.length });
+        if (!finalPrompt) {
+            return NextResponse.json({ error: "Missing 'prompt' or generation details" }, { status: 400 });
+        }
 
-        // 2. Initialize Client
+        console.log("🚀 [Gemini API] Request:", { hasModel: !!modelStorageId, contextLen: currentContent?.length });
+
+        // 2. Initialize Clients
         const ai = new GoogleGenAI({ apiKey });
+        const convex = new ConvexHttpClient(convexUrl);
 
-        // 3. Construct System Instructions (Strict Mode)
+        // 3. Prepare Parts
+        const parts: any[] = [
+            { text: finalPrompt }
+        ];
+
+        // 4. Handle Model File (Multimodal)
+        if (modelStorageId) {
+            console.log("📥 [Gemini API] Fetching model file...", modelStorageId);
+            const fileUrl = await convex.query(api.files.getUrl, { storageId: modelStorageId });
+            
+            if (fileUrl) {
+                const fileReq = await fetch(fileUrl);
+                const arrayBuffer = await fileReq.arrayBuffer();
+                const base64Data = Buffer.from(arrayBuffer).toString("base64");
+                const mimeType = fileReq.headers.get("content-type") || "application/pdf";
+
+                console.log("📎 [Gemini API] Attaching file:", mimeType);
+                
+                // Insert file at the beginning for context
+                parts.unshift({
+                    inlineData: {
+                        data: base64Data,
+                        mimeType: mimeType
+                    }
+                });
+            } else {
+                console.warn("⚠️ [Gemini API] Could not get URL for storageId:", modelStorageId);
+            }
+        }
+
+        // 5. Construct System Instructions (Strict Mode)
         const systemInstruction = `
+        ### ROLE: PRECISE DOCUMENT EDITOR & STYLIST.
         ### ROLE: PRECISE DOCUMENT EDITOR & STYLIST.
         
         ### CRITICAL RULE: NO CONVERSATIONAL FILLER
@@ -65,6 +125,10 @@ export async function POST(request: Request) {
           1. Apply changes to the whole document.
           2. Return the FULL updated document content as HTML.
         
+        ### TAGGING SYSTEM:
+        - The user may use @TagName or @"Tag Name" to reference specific sections.
+        - Treat these as primary context for your modifications.
+        
         CONTEXT:
         ${currentContent ? currentContent.substring(0, 30000) : "No context enabled."}
         
@@ -72,22 +136,25 @@ export async function POST(request: Request) {
         ${selection || "No specific selection."}
         `;
 
-        // 4. Call Gemini (Model: gemini-2.5-flash)
-        // Note: Using 'contents' array structure for compatibility with latest SDK
-        console.log("⏳ [Gemini API] Calling generateContent...");
+        // Merge System Instruction into the text prompt
+        const textPartIndex = parts.findIndex(p => p.text);
+        if (textPartIndex !== -1) {
+             parts[textPartIndex].text = systemInstruction + "\n\n### USER REQUEST:\n" + parts[textPartIndex].text;
+        }
+
+        // 4. Call Gemini (Model: gemini-2.5-flash which supports multimodal)
+        console.log("⏳ [Gemini API] Calling generateContent with parts:", parts.length);
         
         const response = await ai.models.generateContent({
             model: "gemini-2.5-flash",
             config: {
-                temperature: 0.3, // Lower temperature for more deterministic/precise editing
+                temperature: 0.3, 
                 candidateCount: 1,
             },
             contents: [
                 {
                     role: "user",
-                    parts: [
-                        { text: systemInstruction + "\n\n### USER REQUEST:\n" + prompt }
-                    ]
+                    parts: parts
                 }
             ]
         });
@@ -106,13 +173,26 @@ export async function POST(request: Request) {
              text = response.candidates[0].content.parts[0].text;
         }
 
-        // Clean up text
-        text = text?.trim();
+        // Clean up text: Robustly extract HTML from potentially wrapped response
+        text = text?.trim() || "";
+        
+        // Try to find content inside ```html ... ``` blocks
+        const htmlMatch = text.match(/```(?:html)?\s*([\s\S]*?)```/);
+        if (htmlMatch) {
+            text = htmlMatch[1].trim();
+        } else {
+            // If no backticks, try to strip common conversational prefixes
+            // but keep it safe. Usually Gemini follows system instructions well.
+            // If total text looks like it has HTML tags, it's probably fine.
+            text = text.replace(/^[^<]*(<[\s\S]*>)[^>]*$/, "$1").trim();
+        }
 
         if (!text) {
-            console.error("❌ [Gemini API] Empty response content:", JSON.stringify(response, null, 2));
-            throw new Error("Gemini produced empty content.");
+            console.error("❌ [Gemini API] Could not extract valid content from response:", text);
+            throw new Error("Gemini produced invalid or empty content.");
         }
+
+        console.log("📤 [Gemini API] Final Cleaned Content Sample:", text.substring(0, 100));
 
         return NextResponse.json({ content: text });
 

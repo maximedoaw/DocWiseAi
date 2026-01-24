@@ -7,7 +7,7 @@ import { ProjectsMobileNav } from "@/components/projects/ProjectsMobileNav"
 import { ProjectCard } from "@/components/projects/ProjectCard"
 import { Button } from "@/components/ui/button"
 import { Plus } from "lucide-react"
-import Link from "next/link"
+import { CreateProjectDialog } from "@/components/projects/CreateProjectDialog"
 
 export default function ProjectsPage() {
     const projects = useQuery(api.projects.list)
@@ -25,12 +25,14 @@ export default function ProjectsPage() {
                             <p className="text-muted-foreground mt-1">Gérez et éditez vos rapports de stage.</p>
                         </div>
                     </div>
-                    <Link href="/onboarding" className="hidden md:flex">
-                        <Button className="gap-2 text-white">
-                            <Plus className="w-4 h-4" />
-                            Créer un projet
-                        </Button>
-                    </Link>
+                    <div className="hidden md:block">
+                        <CreateProjectDialog>
+                            <Button className="gap-2 text-white">
+                                <Plus className="w-4 h-4" />
+                                Créer un projet
+                            </Button>
+                        </CreateProjectDialog>
+                    </div>
                 </header>
 
                 {projects === undefined ? (
@@ -48,9 +50,9 @@ export default function ProjectsPage() {
                         <p className="text-muted-foreground max-w-sm mb-6">
                             Commencez par créer votre premier rapport pour accéder à l'éditeur intelligent.
                         </p>
-                        <Link href="/onboarding">
+                        <CreateProjectDialog>
                             <Button size="lg">Créer un nouveau rapport</Button>
-                        </Link>
+                        </CreateProjectDialog>
                     </div>
                 ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
