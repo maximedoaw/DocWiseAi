@@ -7,19 +7,23 @@ import { Id } from "@/convex/_generated/dataModel"
 import { PageContainer } from "./PageContainer"
 import { Button } from "@/components/ui/button"
 import { Plus } from "lucide-react"
+import { MultiSectionGenerationModal } from "./MultiSectionGenerationModal"
 
 interface CustomEditorProps {
     projectId: Id<"projects">
+    project: any
     pages: any[]
     onPageSelect: (id: string) => void
     onPagesChange?: (pages: any[]) => void
 }
 
-export const CustomEditor = forwardRef<any, CustomEditorProps>(({ projectId, pages: initialPages, onPageSelect, onPagesChange }, ref) => {
+export const CustomEditor = forwardRef<any, CustomEditorProps>(({ projectId, project, pages: initialPages, onPageSelect, onPagesChange }, ref) => {
     // Local state for pages to allow instant UI updates
     const [pages, setPages] = useState<any[]>(initialPages)
     const [activePageId, setActivePageId] = useState<string | null>(initialPages[0]?.id || null)
-    const [aiDraft, setAiDraft] = useState<{ content: string, pageId: string } | null>(null)
+    const [aiDraft, setAiDraft] = useState<{ content: string, pageId: string, targetTagName?: string } | null>(null)
+    const [showBatchGen, setShowBatchGen] = useState(false)
+    const [hasCheckedForGen, setHasCheckedForGen] = useState(false)
 
     // Refs for accessing page components
     const pageRefs = useRef<{ [key: string]: any }>({})
@@ -32,6 +36,32 @@ export const CustomEditor = forwardRef<any, CustomEditorProps>(({ projectId, pag
     const deletePage = useMutation(api.projects.deletePage)
 
     const [isSaving, setIsSaving] = useState(false)
+
+    // Trigger batch generation if project just created and has a plan
+    useEffect(() => {
+        if (!hasCheckedForGen && project?.initialContent && pages.length <= 1) {
+            // Check if the only page content is just "Introduction" default stuff
+            const firstPageContent = pages[0]?.content || ""
+            if (firstPageContent.length < 500) { // arbitrary threshold for "empty/placeholder"
+                setShowBatchGen(true)
+            }
+            setHasCheckedForGen(true)
+        }
+    }, [project, pages, hasCheckedForGen])
+
+    const handleBatchSectionGenerated = async (title: string, content: string) => {
+        const newPageId = await addPage({
+            projectId,
+            title,
+            content
+        })
+
+        // Update local state is handled by real-time sync with Convex, 
+        // but we might want to manually scroll to it
+        if (newPageId) {
+            // Let Convex sync do it.
+        }
+    }
 
     // Scroll Sync Logic
     useEffect(() => {
@@ -321,6 +351,14 @@ export const CustomEditor = forwardRef<any, CustomEditorProps>(({ projectId, pag
                     </span>
                 )}
             </div>
+
+            <MultiSectionGenerationModal
+                open={showBatchGen}
+                planHTML={project?.initialContent || ""}
+                projectDetails={project}
+                onSectionGenerated={handleBatchSectionGenerated}
+                onComplete={() => setShowBatchGen(false)}
+            />
         </div>
     )
 })

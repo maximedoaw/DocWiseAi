@@ -24,14 +24,21 @@ export default defineSchema({
     status: v.string(), // "draft", "completed"
     content: v.optional(v.string()), // Deprecated but kept for migration
     modelStorageId: v.optional(v.string()), // ID of the uploaded PDF/Docx model
-    pages: v.optional(v.array(v.object({
-        id: v.string(), // UUID
-        title: v.string(),
-        content: v.string(), // JSON string for Lexical state of this page
-    }))),
+    initialContent: v.optional(v.string()), // AI generated plan or initial state
+    // DEPRECATED: Storing pages in array hits the 1MB limit. Use the 'pages' table instead.
+    pages: v.optional(v.any()), 
     createdAt: v.number(),
     updatedAt: v.number(),
   })
   .index("by_user", ["userId"])
   .index("by_user_status", ["userId", "status"]),
+
+  pages: defineTable({
+    projectId: v.id("projects"),
+    title: v.string(),
+    content: v.string(), // HTML/JSON content
+    order: v.number(), // For sorting pages
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_project", ["projectId"]),
 });

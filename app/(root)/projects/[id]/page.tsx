@@ -118,14 +118,14 @@ export default function EditorPage() {
     }
 
     // Handler for AI generation insertion
-    const handleAIInsert = (html: string, prompt: string) => {
+    const handleAIInsert = (html: string) => {
         if (editorRef.current) {
-            editorRef.current.insertAIDraft(html, prompt)
+            editorRef.current.insertAIDraft(html)
         }
     }
 
     const handleGenerateReport = async () => {
-        if (!project.modelStorageId) return;
+        if (!project || !project.modelStorageId) return;
 
         setGenerationStep("analysing");
 
@@ -324,6 +324,7 @@ export default function EditorPage() {
                             key={project._id}
                             ref={editorRef}
                             projectId={project._id}
+                            project={project}
                             pages={project.pages || []}
                             onPageSelect={setActivePageId}
                             onPagesChange={setLocalPages}

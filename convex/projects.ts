@@ -14,6 +14,7 @@ export const create = mutation({
     missions: v.array(v.string()),
     pageCount: v.optional(v.number()), // Not in schema but might be useful to store config
     modelStorageId: v.optional(v.string()), // ID of the uploaded PDF/Docx model
+    initialContent: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
@@ -32,15 +33,21 @@ export const create = mutation({
       duration: args.duration,
       missions: args.missions,
       modelStorageId: args.modelStorageId,
+      initialContent: args.initialContent,
       status: "draft",
       createdAt: Date.now(),
       updatedAt: Date.now(),
       numPages: args.numPages,
-      pages: [
-        {
-          id: `page-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
-          title: "Introduction",
-          content: JSON.stringify({
+    });
+
+    // Create initial page in the new table
+    await ctx.db.insert("pages", {
+        projectId,
+        title: "Introduction",
+        order: 0,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        content: args.initialContent ? args.initialContent : JSON.stringify({
             root: {
               children: [
                 {
@@ -78,8 +85,6 @@ export const create = mutation({
               version: 1,
             },
           }),
-        }
-      ]
     });
 
     return projectId;
@@ -107,134 +112,87 @@ export const get = query({
   args: { id: v.id("projects") },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
-    if (!identity) {
-      // Instead of throwing, we return null to let the UI handle it (e.g. redirecting or showing login)
-      // Throwing causes a crash in the UI which is not ideal for the initial load
-      return null;
-    }
+    if (!identity) return null;
 
     const project = await ctx.db.get(args.id);
-    if (!project) return null;
+    if (!project || project.userId !== identity.subject) return null;
 
-    if (project.userId !== identity.subject) {
-      // If user is logged in but doesn't own the project, we can return null or throw.
-      // Returning null treats it as "Not Found" for this user.
-      console.warn(`User ${identity.subject} tried to access project ${args.id} owned by ${project.userId}`);
-      return null; 
-    }
-
-    // Migration for old projects without pages or numPages
-    const needsMigration = 
-      project.numPages === undefined || 
-      !project.pages || 
-      project.pages.length === 0;
+    // Fetch pages from standalone table
+    const pages = await ctx.db
+        .query("pages")
+        .withIndex("by_project", (q) => q.eq("projectId", args.id))
+        .collect();
     
-    if (needsMigration) {
-      const migratedProject: any = { ...project };
-      
-      // Add numPages if missing (use pages length or default to 1)
-      if (migratedProject.numPages === undefined) {
-        migratedProject.numPages = migratedProject.pages?.length || 1;
-      }
-      
-      // Migrate old content to pages array if needed
-      if (!migratedProject.pages || migratedProject.pages.length === 0) {
-        const oldContent = (project as any).content || JSON.stringify({
-          root: {
-            children: [{
-              children: [],
-              direction: "ltr",
-              format: "",
-              indent: 0,
-              type: "paragraph",
-              version: 1
-            }],
-            direction: "ltr",
-            format: "",
-            indent: 0,
-            type: "root",
-            version: 1
-          }
-        });
-        
-        migratedProject.pages = [
-          {
-            id: `page-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
-            title: "Introduction",
-            content: oldContent
-          }
-        ];
-      }
-      
-      // Update the project in database if migration was needed
-      // Note: We cannot perform side-effects (writes) in a query. 
-      // The migration will effectively happen in the DB when the user saves the project.
-      // For now, we just return the migrated structure so the UI works.
-      
-      return migratedProject;
+    // Sort by order
+    const sortedPages = pages.sort((a, b) => a.order - b.order);
+
+    // MIGRATION: If no pages found in pages table, check for deprecated inline pages
+    if (sortedPages.length === 0 && (project as any).pages?.length > 0) {
+        // Return inline pages for this query result only. 
+        // Real migration happens on first save/edit.
+        return {
+            ...project,
+            pages: (project as any).pages.map((p: any, idx: number) => ({
+                _id: p.id,
+                title: p.title,
+                content: p.content,
+                order: idx
+            }))
+        };
     }
 
-    return project;
+    return {
+        ...project,
+        pages: sortedPages
+    };
   },
 });
 
 export const updatePageContent = mutation({
   args: {
     projectId: v.id("projects"),
-    pageId: v.string(),
+    pageId: v.string(), // This could be v.id("pages") or the old UUID string
     content: v.string(),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
-    if (!identity) {
-      throw new Error("Unauthorized");
-    }
+    if (!identity) throw new Error("Unauthorized");
 
     const project = await ctx.db.get(args.projectId);
-    if (!project || project.userId !== identity.subject) {
-      throw new Error("Unauthorized");
+    if (!project || project.userId !== identity.subject) throw new Error("Unauthorized");
+
+    // Try to find the page in the standalone 'pages' table
+    let page: any = null;
+    try {
+        // First try to treat pageId as a real document ID
+        page = await ctx.db.get(args.pageId as any);
+    } catch {
+        // Fallback: search by 'projectId' and custom ID/title for legacy
+        const allPages = await ctx.db.query("pages")
+            .withIndex("by_project", q => q.eq("projectId", args.projectId))
+            .collect();
+        page = allPages.find((p: any) => p._id === args.pageId);
     }
 
-    // Migration: If the project has no pages in DB, we treat this update as the initialization of the first page.
-    // We use the pageId provided by the client to ensure sync.
-    if (!project.pages || project.pages.length === 0) {
-        const newPage = {
-            id: args.pageId,
-            title: "Introduction",
-            content: args.content
-        };
-        await ctx.db.patch(args.projectId, {
-            pages: [newPage],
+    if (page) {
+        await ctx.db.patch(page._id, {
+            content: args.content,
             updatedAt: Date.now(),
         });
-        return;
-    }
-    
-    const pages = project.pages;
-    const pageIndex = pages.findIndex(p => p.id === args.pageId);
-    
-    if (pageIndex === -1) {
-        // As a final fallback for migration, if there's only one page and the ID mismatch, 
-        // we might be in a state where query generated one ID and mutation another.
-        // If project has exactly 1 page and it's practically empty, we allow updating it.
-        if (pages.length === 1 && (pages[0].content === "{}" || !pages[0].content)) {
-             const updatedPages = [{ ...pages[0], id: args.pageId, content: args.content }];
-             await ctx.db.patch(args.projectId, {
-                pages: updatedPages,
-                updatedAt: Date.now(),
-             });
-             return;
-        }
-        throw new Error(`Page not found: ${args.pageId}`);
+    } else {
+        // FALLBACK: If it was a legacy inline page that hasn't been migrated yet, 
+        // we create it in the new table now.
+        await ctx.db.insert("pages", {
+            projectId: args.projectId,
+            title: "Page Migrée",
+            content: args.content,
+            order: 0,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+        });
     }
 
-    const newPages = [...pages];
-    newPages[pageIndex] = { ...newPages[pageIndex], content: args.content };
-
-    await ctx.db.patch(args.projectId, {
-      pages: newPages,
-      updatedAt: Date.now(),
-    });
+    await ctx.db.patch(args.projectId, { updatedAt: Date.now() });
   },
 });
 
@@ -251,20 +209,23 @@ export const addPage = mutation({
         const project = await ctx.db.get(args.projectId);
         if (!project || project.userId !== identity.subject) throw new Error("Unauthorized");
 
-        const defaultContent = `<h1>${args.title}</h1><p><br></p>`;
+        // Determine next order
+        const existingPages = await ctx.db.query("pages")
+            .withIndex("by_project", q => q.eq("projectId", args.projectId))
+            .collect();
+        const maxOrder = existingPages.reduce((max, p) => Math.max(max, p.order), -1);
 
-        const newPage = {
-            id: `page-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+        const pageId = await ctx.db.insert("pages", {
+            projectId: args.projectId,
             title: args.title,
-            content: args.content || defaultContent
-        };
-
-        await ctx.db.patch(args.projectId, {
-            pages: [...(project.pages || []), newPage],
-            updatedAt: Date.now()
+            content: args.content || `<h1>${args.title}</h1><p><br></p>`,
+            order: maxOrder + 1,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
         });
         
-        return newPage.id;
+        await ctx.db.patch(args.projectId, { updatedAt: Date.now() });
+        return pageId;
     }
 });
 
@@ -280,12 +241,17 @@ export const deletePage = mutation({
         const project = await ctx.db.get(args.projectId);
         if (!project || project.userId !== identity.subject) throw new Error("Unauthorized");
 
-        const newPages = (project.pages || []).filter(p => p.id !== args.pageId);
-
-        await ctx.db.patch(args.projectId, {
-            pages: newPages,
-            updatedAt: Date.now()
-        });
+        try {
+            await ctx.db.delete(args.pageId as any);
+        } catch {
+            const allPages = await ctx.db.query("pages")
+                .withIndex("by_project", q => q.eq("projectId", args.projectId))
+                .collect();
+            const page = allPages.find((p: any) => p._id === args.pageId);
+            if (page) await ctx.db.delete(page._id);
+        }
+        
+        await ctx.db.patch(args.projectId, { updatedAt: Date.now() });
     }
 });
 
@@ -293,13 +259,17 @@ export const deleteProject = mutation({
     args: { id: v.id("projects") },
     handler: async (ctx, args) => {
         const identity = await ctx.auth.getUserIdentity();
-        if (!identity) {
-            throw new Error("Unauthorized");
-        }
+        if (!identity) throw new Error("Unauthorized");
 
         const project = await ctx.db.get(args.id);
-        if (!project || project.userId !== identity.subject) {
-            throw new Error("Unauthorized");
+        if (!project || project.userId !== identity.subject) throw new Error("Unauthorized");
+
+        // Delete all associated pages
+        const pages = await ctx.db.query("pages")
+            .withIndex("by_project", q => q.eq("projectId", args.id))
+            .collect();
+        for (const page of pages) {
+            await ctx.db.delete(page._id);
         }
 
         await ctx.db.delete(args.id);

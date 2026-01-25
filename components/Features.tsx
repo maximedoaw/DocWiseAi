@@ -5,8 +5,8 @@ import { cn } from "@/lib/utils"
 const features = [
   {
     icon: Library,
-    title: "Bibliothèque Académique",
-    description: "Des structures validées pour chaque niveau d'études. Ne partez plus d'une page blanche.",
+    title: "Structures Académiques",
+    description: "Des plans rigoureux pour BTS, Licence et Master, validés selon les normes académiques en vigueur.",
     color: "text-amber-700 dark:text-amber-300",
     bgColor: "bg-gradient-to-br from-amber-50/40 to-white dark:from-amber-950/20 dark:to-gray-900/30",
     borderColor: "border-amber-200/60 dark:border-amber-800/40",
@@ -16,8 +16,8 @@ const features = [
   },
   {
     icon: Sparkles,
-    title: "Intelligence Fine",
-    description: "Une plume qui s'adapte à votre ton sans jamais sonner robotique.",
+    title: "Analyse de Terrain",
+    description: "Une aide précieuse pour transformer vos missions quotidiennes en analyses professionnelles pertinentes.",
     color: "text-blue-800 dark:text-blue-300",
     bgColor: "bg-gradient-to-br from-blue-50/40 to-white dark:from-blue-950/20 dark:to-gray-900/30",
     borderColor: "border-blue-200/60 dark:border-blue-800/40",
@@ -27,8 +27,8 @@ const features = [
   },
   {
     icon: Heart,
-    title: "Accompagnement Zen",
-    description: "Une interface pensée pour réduire le stress, étape après étape.",
+    title: "Bilan Serein",
+    description: "Rédigez votre conclusion et vos remerciements avec humanité et intelligence, étape par étape.",
     color: "text-rose-700 dark:text-rose-300",
     bgColor: "bg-gradient-to-br from-rose-50/40 to-white dark:from-rose-950/20 dark:to-gray-900/30",
     borderColor: "border-rose-200/60 dark:border-rose-800/40",
@@ -38,8 +38,8 @@ const features = [
   },
   {
     icon: CheckCircle2,
-    title: "Rigueur Labellisée",
-    description: "Correction avancée et mise en conformité automatique aux normes académiques.",
+    title: "Mise en page Fine",
+    description: "Exportations PDF et Word impeccables, avec une typographie soignée prête pour la reliure.",
     color: "text-emerald-800 dark:text-emerald-300",
     bgColor: "bg-gradient-to-br from-emerald-50/40 to-white dark:from-emerald-950/20 dark:to-gray-900/30",
     borderColor: "border-emerald-200/60 dark:border-emerald-800/40",
@@ -49,8 +49,8 @@ const features = [
   },
   {
     icon: Calendar,
-    title: "Maîtrise du Temps",
-    description: "Générez votre planning de rédaction et respectez vos échéances.",
+    title: "Gestion d&apos;Échéance",
+    description: "Organisez votre temps de rédaction pour éviter la précipitation des derniers jours avant le rendu.",
     color: "text-violet-800 dark:text-violet-300",
     bgColor: "bg-gradient-to-br from-violet-50/40 to-white dark:from-violet-950/20 dark:to-gray-900/30",
     borderColor: "border-violet-200/60 dark:border-violet-800/40",
@@ -60,8 +60,8 @@ const features = [
   },
   {
     icon: Download,
-    title: "Export Professionnel",
-    description: "Un rendu final soigné, prêt à être relié ou envoyé numériquement.",
+    title: "Correction de Style",
+    description: "Une relecture IA qui gomme les maladresses pour un ton académique juste et professionnel.",
     color: "text-orange-700 dark:text-orange-300",
     bgColor: "bg-gradient-to-br from-orange-50/40 to-white dark:from-orange-950/20 dark:to-gray-900/30",
     borderColor: "border-orange-200/60 dark:border-orange-800/40",

@@ -8,6 +8,7 @@ import { ProjectCard } from "@/components/projects/ProjectCard"
 import { Button } from "@/components/ui/button"
 import { Plus } from "lucide-react"
 import { CreateProjectDialog } from "@/components/projects/CreateProjectDialog"
+import { ThemeToggle } from "@/components/ThemeToggle"
 
 export default function ProjectsPage() {
     const projects = useQuery(api.projects.list)
@@ -16,22 +17,25 @@ export default function ProjectsPage() {
         <div className="flex min-h-screen bg-background text-foreground">
             <ProjectsSidebar />
 
-            <main className="flex-1 p-4 md:p-8 overflow-y-auto">
+            <main className="flex-1 p-4 md:p-8 overflow-y-auto font-light">
                 <header className="flex items-center justify-between mb-8">
                     <div className="flex items-center gap-4">
                         <ProjectsMobileNav />
                         <div>
-                            <h1 className="text-3xl font-bold tracking-tight">Mes Projets</h1>
-                            <p className="text-muted-foreground mt-1">Gérez et éditez vos rapports de stage.</p>
+                            <h1 className="text-3xl font-serif font-medium tracking-tight">Mes Projets</h1>
+                            <p className="text-muted-foreground mt-1 font-light italic">Gérez et éditez vos rapports de stage.</p>
                         </div>
                     </div>
-                    <div className="hidden md:block">
-                        <CreateProjectDialog>
-                            <Button className="gap-2 text-white">
-                                <Plus className="w-4 h-4" />
-                                Créer un projet
-                            </Button>
-                        </CreateProjectDialog>
+                    <div className="flex items-center gap-3">
+                        <ThemeToggle />
+                        <div className="hidden md:block">
+                            <CreateProjectDialog>
+                                <Button className="gap-2 text-white font-serif italic">
+                                    <Plus className="w-4 h-4" />
+                                    Nouveau Projet
+                                </Button>
+                            </CreateProjectDialog>
+                        </div>
                     </div>
                 </header>
 
